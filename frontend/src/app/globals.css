@@ -1,0 +1,152 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-card: rgba(30, 41, 59, 0.5);
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #64748b;
+  --accent-cyan: #06b6d4;
+  --accent-purple: #8b5cf6;
+  --accent-emerald: #10b981;
+  --accent-rose: #f43f5e;
+  --border-color: #334155;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #1e293b;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+body {
+  color: var(--text-primary);
+  background: linear-gradient(135deg, var(--bg-primary) 0%, #0c1222 50%, var(--bg-primary) 100%);
+  min-height: 100vh;
+}
+
+@layer utilities {
+  /* Fade in animation */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Glow animation for new records */
+  .animate-glow {
+    animation: glow 2s ease-in-out;
+  }
+
+  @keyframes glow {
+    0% { 
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.8), 0 0 40px rgba(6, 182, 212, 0.4);
+      background-color: rgba(6, 182, 212, 0.2);
+    }
+    100% { 
+      box-shadow: none;
+      background-color: transparent;
+    }
+  }
+
+  /* Pulse animation for live indicator */
+  .animate-pulse-glow {
+    animation: pulseGlow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulseGlow {
+    0%, 100% {
+      opacity: 1;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+    }
+    50% {
+      opacity: 0.5;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 1);
+    }
+  }
+
+  /* Number counter animation */
+  .animate-count {
+    animation: countUp 0.5s ease-out;
+  }
+
+  @keyframes countUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Card hover effect */
+  .card-hover {
+    transition: all 0.3s ease;
+  }
+
+  .card-hover:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Glassmorphism */
+  .glass {
+    background: rgba(30, 41, 59, 0.5);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(71, 85, 105, 0.5);
+  }
+
+  .glass-strong {
+    background: rgba(30, 41, 59, 0.8);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(71, 85, 105, 0.6);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Shimmer loading effect */
+  .shimmer {
+    background: linear-gradient(90deg, #1e293b 0%, #334155 50%, #1e293b 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* Row highlight for alternating */
+  .row-alternate:nth-child(even) {
+    background-color: rgba(30, 41, 59, 0.3);
+  }
+
+  .row-alternate:nth-child(odd) {
+    background-color: rgba(15, 23, 42, 0.3);
+  }
+}

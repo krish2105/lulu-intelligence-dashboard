@@ -1,0 +1,11 @@
+{
+  "exclude": [
+    "**/__pycache__",
+    ".git",
+    "alembic"
+  ],
+  "typeCheckingMode": "off",
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false,
+  "pythonVersion": "3.11"
+}
