@@ -66,10 +66,23 @@ class DataGenerator:
     
     async def _generate_and_store_sale(self):
         """Generate a new sale and store it in the database"""
+        from app.models.sales import Store, Item
+        
         async with async_session() as session:
             # Randomly select store and item for variety
             store_id = random.randint(1, 10)
             item_id = random.randint(1, 50)
+            
+            # Fetch store and item names for enriched data
+            store_result = await session.execute(
+                select(Store).where(Store.id == store_id)
+            )
+            store = store_result.scalar_one_or_none()
+            
+            item_result = await session.execute(
+                select(Item).where(Item.id == item_id)
+            )
+            item = item_result.scalar_one_or_none()
             
             sale = Sale(
                 date=datetime.now().date(),
@@ -83,15 +96,19 @@ class DataGenerator:
             await session.commit()
             await session.refresh(sale)
             
-            # Publish to Redis for real-time streaming
+            # Publish to Redis for real-time streaming with enriched data
             sale_data = {
                 'id': sale.id,
                 'date': sale.date.isoformat(),
                 'store_id': sale.store_id,
+                'store_name': store.name if store else f'Store {store_id}',
                 'item_id': sale.item_id,
+                'item_name': item.name if item else f'Item {item_id}',
+                'category': item.category if item else 'General',
                 'sales': sale.sales,
                 'is_streaming': sale.is_streaming,
-                'created_at': sale.created_at.isoformat()
+                'created_at': sale.created_at.isoformat(),
+                'timestamp': sale.created_at.isoformat()
             }
             await publish_sale(sale_data)
             

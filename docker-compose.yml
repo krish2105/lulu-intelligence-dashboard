@@ -46,6 +46,8 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-salesuser}:${POSTGRES_PASSWORD:-salespass}@postgres:5432/${POSTGRES_DB:-salesdb}
       - REDIS_URL=redis://redis:6379
       - ENVIRONMENT=development
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:

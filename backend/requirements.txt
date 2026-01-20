@@ -12,3 +12,4 @@ numpy==1.26.3
 apscheduler==3.10.4
 httpx==0.26.0
 sse-starlette==2.0.0
+python-multipart==0.0.9

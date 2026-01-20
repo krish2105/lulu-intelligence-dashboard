@@ -16,9 +16,27 @@ interface StreamSale {
   isNew?: boolean;
 }
 
+// Parse timestamp safely - handles various formats
+function parseTimestamp(timestamp: string | undefined | null): Date | null {
+  if (!timestamp) return null;
+  try {
+    let dateStr = timestamp;
+    // If it doesn't have timezone info, assume UTC
+    if (!dateStr.includes('Z') && !dateStr.includes('+') && !dateStr.includes('-', 10)) {
+      dateStr = dateStr + 'Z';
+    }
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return null;
+    return date;
+  } catch {
+    return null;
+  }
+}
+
 // Format timestamp to readable format
-function formatTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
+function formatTimestamp(timestamp: string | undefined | null): string {
+  const date = parseTimestamp(timestamp);
+  if (!date) return 'Just now';
   return date.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -30,14 +48,17 @@ function formatTimestamp(timestamp: string): string {
 }
 
 // Calculate time ago
-function getTimeAgo(timestamp: string): string {
+function getTimeAgo(timestamp: string | undefined | null): string {
+  const then = parseTimestamp(timestamp);
+  if (!then) return 'just now';
+  
   const now = new Date();
-  const then = new Date(timestamp);
   const diffMs = now.getTime() - then.getTime();
   const diffSecs = Math.floor(diffMs / 1000);
   const diffMins = Math.floor(diffSecs / 60);
   const diffHours = Math.floor(diffMins / 60);
   
+  if (diffSecs < 0) return 'just now';
   if (diffSecs < 5) return 'just now';
   if (diffSecs < 60) return `${diffSecs}s ago`;
   if (diffMins < 60) return `${diffMins}m ago`;
@@ -72,7 +93,12 @@ export default function LiveTable() {
       const response = await fetch('http://localhost:8000/stream/latest?limit=20');
       if (!response.ok) throw new Error('Failed to fetch latest data');
       const data = await response.json();
-      setSales(data);
+      // Normalize timestamp field - API returns 'timestamp' but SSE might use 'created_at'
+      const normalized = data.map((sale: any) => ({
+        ...sale,
+        timestamp: sale.timestamp || sale.created_at || new Date().toISOString()
+      }));
+      setSales(normalized);
     } catch (err) {
       console.error('Error fetching latest:', err);
     }
@@ -95,20 +121,27 @@ export default function LiveTable() {
 
     eventSource.addEventListener('sales', (event) => {
       try {
-        const sale = JSON.parse(event.data);
-        setNextStreamIn(60); // Reset countdown
+        const rawSale = JSON.parse(event.data);
+        // Normalize: use created_at as timestamp if timestamp is missing
+        const sale = {
+          ...rawSale,
+          timestamp: rawSale.timestamp || rawSale.created_at || new Date().toISOString(),
+          store_name: rawSale.store_name || `Store ${rawSale.store_id}`,
+          item_name: rawSale.item_name || `Item ${rawSale.item_id}`
+        };
+        setNextStreamIn(10); // Reset countdown - faster interval
         setSales((prev) => {
           const newSale = { ...sale, isNew: true };
           const updated = [newSale, ...prev.slice(0, 19)];
           
-          // Remove highlight after 3 seconds
+          // Remove highlight after 2 seconds for faster feel
           setTimeout(() => {
             setSales((current) => 
               current.map((s) => 
                 s.id === sale.id ? { ...s, isNew: false } : s
               )
             );
-          }, 3000);
+          }, 2000);
           
           return updated;
         });
@@ -122,10 +155,10 @@ export default function LiveTable() {
       setError('Connection lost. Reconnecting...');
       eventSource.close();
 
-      // Reconnect after 5 seconds
+      // Reconnect after 1 second for faster recovery
       reconnectTimeoutRef.current = setTimeout(() => {
         connectSSE();
-      }, 5000);
+      }, 1000);
     };
   };
 

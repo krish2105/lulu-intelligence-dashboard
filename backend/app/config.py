@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = True
     
-    # Streaming
-    streaming_interval_seconds: int = 60
+    # Streaming - 10 seconds for fast real-time updates
+    streaming_interval_seconds: int = 10
     
     # Predictions
     forecast_days: int = 30

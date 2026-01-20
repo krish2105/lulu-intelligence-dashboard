@@ -9,6 +9,7 @@ from app.services.database import init_db, close_db
 from app.services.redis_client import init_redis, close_redis
 from app.services.data_generator import DataGenerator
 from app.routes import sales, streaming, history, kpis, stream, analytics
+from app.routes import ai as ai_routes
 
 
 settings = get_settings()
@@ -65,6 +66,7 @@ app.include_router(history.router, prefix="/api/history", tags=["History"])
 app.include_router(kpis.router, prefix="/api/kpis", tags=["KPIs"])
 app.include_router(stream.router, prefix="/stream", tags=["Stream"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(ai_routes.router, prefix="/api/ai", tags=["AI Assistant"])
 
 # Also mount /api/latest from stream router
 @app.get("/api/latest", tags=["Stream"])
