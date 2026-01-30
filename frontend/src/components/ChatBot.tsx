@@ -18,6 +18,50 @@ import {
   Sparkles
 } from 'lucide-react';
 
+// Web Speech API types
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+  isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: (event: Event & { error: string }) => void;
+  onend: () => void;
+  onstart: () => void;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognition;
+    webkitSpeechRecognition: new () => SpeechRecognition;
+  }
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -36,7 +80,7 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
     {
       id: '0',
       role: 'assistant',
-      content: "👋 Hello! I'm **Lulu AI**, your intelligent sales analytics assistant. I can help you:\n\n• Analyze sales trends and patterns\n• Explain dashboard metrics\n• Provide insights on store performance\n• Answer questions about products and categories\n\nHow can I assist you today?",
+      content: "👋 Hello! I'm **Lulu AI**, your intelligent sales analytics assistant. I can help you:\n\n• Analyze sales trends and patterns\n• Explain dashboard metrics\n• Provide insights on store performance\n• Answer questions about products and categories\n\n🎤 **Voice Input**: Click the mic button and speak. Your words will appear in real-time!\n\nHow can I assist you today?",
       timestamp: new Date()
     }
   ]);
@@ -47,11 +91,14 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Generate session ID on mount
   useEffect(() => {
@@ -186,92 +233,213 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
     }]);
   };
 
-  // Voice recording
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+  // Helper to add system messages to chat
+  const addSystemMessage = (content: string) => {
+    const systemMsg: Message = {
+      id: `system_${Date.now()}`,
+      role: 'system',
+      content,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, systemMsg]);
+    return systemMsg.id;
+  };
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-        }
-      };
+  const updateSystemMessage = (id: string, content: string) => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, content } : m));
+  };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        stream.getTracks().forEach(track => track.stop());
-        
-        // Convert to base64 and transcribe
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64 = (reader.result as string).split(',')[1];
-          
-          try {
-            const response = await fetch('http://localhost:8000/api/ai/voice/transcribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                audio_base64: base64,
-                mimetype: 'audio/webm',
-                language: 'en'
-              })
-            });
+  // Initialize Web Speech API
+  const initSpeechRecognition = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      console.warn('Speech Recognition not supported');
+      return null;
+    }
+    
+    const recognition = new SpeechRecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    
+    return recognition;
+  }, []);
 
-            if (response.ok) {
-              const result = await response.json();
-              if (result.text) {
-                setInput(result.text);
-                // Auto-send after transcription
-                sendMessage(result.text);
-              }
-            }
-          } catch (e) {
-            console.error('Transcription failed:', e);
-          }
-        };
-        reader.readAsDataURL(audioBlob);
-      };
+  // Toggle voice recording - click to start, click to stop
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
 
-      mediaRecorder.start();
+  // Voice recording using FREE Web Speech API (no API key needed!)
+  const startRecording = () => {
+    if (isProcessingVoice || isLoading) return;
+    
+    const recognition = initSpeechRecognition();
+    if (!recognition) {
+      addSystemMessage('❌ **Speech recognition not supported.** Please use Chrome, Edge, or Safari browser.');
+      return;
+    }
+    
+    recognitionRef.current = recognition;
+    let finalTranscript = '';
+    
+    // Show recording started message
+    const recordingMsgId = addSystemMessage('🎤 **Listening...** Speak now! Your words will appear below in real-time.');
+    
+    recognition.onstart = () => {
       setIsRecording(true);
+      setRecordingDuration(0);
+      setInterimTranscript('');
+      
+      // Start duration timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 0.1);
+      }, 100);
+    };
+    
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          finalTranscript += result[0].transcript + ' ';
+        } else {
+          interim += result[0].transcript;
+        }
+      }
+      
+      // Show real-time transcription in the input box
+      const currentText = (finalTranscript + interim).trim();
+      setInterimTranscript(currentText);
+      setInput(currentText);
+      
+      // Update the recording message to show what's being heard
+      if (currentText) {
+        updateSystemMessage(recordingMsgId, `🎤 **Hearing:** "${currentText}"`);
+      }
+    };
+    
+    recognition.onerror = (event: Event & { error: string }) => {
+      console.error('Speech recognition error:', event.error);
+      
+      if (event.error === 'no-speech') {
+        updateSystemMessage(recordingMsgId, '⚠️ **No speech detected.** Please speak louder or check your microphone.');
+      } else if (event.error === 'audio-capture') {
+        updateSystemMessage(recordingMsgId, '❌ **Microphone not found.** Please connect a microphone and try again.');
+      } else if (event.error === 'not-allowed') {
+        updateSystemMessage(recordingMsgId, '❌ **Microphone access denied.** Please allow microphone access in your browser settings.');
+      } else {
+        updateSystemMessage(recordingMsgId, `❌ **Error:** ${event.error}`);
+      }
+      
+      stopRecording();
+    };
+    
+    recognition.onend = () => {
+      // Clean up timer
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      
+      setIsRecording(false);
+      
+      const finalText = finalTranscript.trim() || interimTranscript.trim();
+      
+      if (finalText) {
+        updateSystemMessage(recordingMsgId, `✅ **Captured:** "${finalText}"`);
+        setInput(finalText);
+        
+        // Auto-send after a short delay
+        setTimeout(() => {
+          sendMessage(finalText);
+        }, 300);
+      } else {
+        updateSystemMessage(recordingMsgId, '⚠️ **No speech captured.** Click mic and try again.');
+      }
+      
+      setInterimTranscript('');
+    };
+    
+    try {
+      recognition.start();
     } catch (e) {
-      console.error('Failed to start recording:', e);
+      console.error('Failed to start recognition:', e);
+      addSystemMessage('❌ **Failed to start speech recognition.** Please try again.');
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+    // Clear the timer
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
       setIsRecording(false);
     }
   };
-
-  // Text-to-speech
-  const speakText = async (text: string) => {
-    setIsSpeaking(true);
-    try {
-      const response = await fetch('http://localhost:8000/api/ai/voice/synthesize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'aura-asteria-en' })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.audio) {
-          const audio = new Audio(`data:audio/mp3;base64,${result.audio}`);
-          audio.onended = () => setIsSpeaking(false);
-          audio.play();
-        }
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
       }
-    } catch (e) {
-      console.error('TTS failed:', e);
-    } finally {
-      setIsSpeaking(false);
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, []);
+
+  // Text-to-speech using FREE browser API
+  const speakText = (text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      console.warn('Speech synthesis not supported');
+      return;
     }
+    
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+    
+    setIsSpeaking(true);
+    
+    // Clean the text (remove markdown)
+    const cleanText = text
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`(.*?)`/g, '$1')
+      .replace(/•/g, '')
+      .replace(/\n/g, ' ');
+    
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    
+    // Try to use a good English voice
+    const voices = window.speechSynthesis.getVoices();
+    const englishVoice = voices.find(v => 
+      v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Microsoft'))
+    ) || voices.find(v => v.lang.startsWith('en'));
+    
+    if (englishVoice) {
+      utterance.voice = englishVoice;
+    }
+    
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    
+    window.speechSynthesis.speak(utterance);
   };
 
   const formatMessage = (content: string) => {
@@ -353,24 +521,28 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
             {messages.map((message) => (
               <div
                 key={message.id}
-                className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
+                className={`flex gap-3 ${message.role === 'user' ? 'flex-row-reverse' : ''} ${message.role === 'system' ? 'justify-center' : ''}`}
               >
-                <div className={`w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center ${
-                  message.role === 'user' 
-                    ? 'bg-cyan-500/20' 
-                    : 'bg-violet-500/20'
-                }`}>
-                  {message.role === 'user' 
-                    ? <User className="w-4 h-4 text-cyan-400" />
-                    : <Bot className="w-4 h-4 text-violet-400" />
-                  }
-                </div>
+                {message.role !== 'system' && (
+                  <div className={`w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center ${
+                    message.role === 'user' 
+                      ? 'bg-cyan-500/20' 
+                      : 'bg-violet-500/20'
+                  }`}>
+                    {message.role === 'user' 
+                      ? <User className="w-4 h-4 text-cyan-400" />
+                      : <Bot className="w-4 h-4 text-violet-400" />
+                    }
+                  </div>
+                )}
                 
-                <div className={`flex-1 ${message.role === 'user' ? 'text-right' : ''}`}>
+                <div className={`flex-1 ${message.role === 'user' ? 'text-right' : ''} ${message.role === 'system' ? 'text-center' : ''}`}>
                   <div
                     className={`inline-block max-w-[85%] p-3 rounded-2xl ${
                       message.role === 'user'
                         ? 'bg-cyan-500/20 text-white rounded-tr-sm'
+                        : message.role === 'system'
+                        ? 'bg-amber-500/10 text-amber-200 border border-amber-500/30 text-xs'
                         : 'bg-slate-800 text-slate-200 rounded-tl-sm'
                     }`}
                   >
@@ -383,21 +555,23 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
                     )}
                   </div>
                   
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-slate-600">
-                      {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    {message.role === 'assistant' && !message.isStreaming && message.content && (
-                      <button
-                        onClick={() => speakText(message.content)}
-                        disabled={isSpeaking}
-                        className="p-1 hover:bg-slate-700 rounded transition-colors"
-                        title="Speak"
-                      >
-                        <Volume2 className={`w-3 h-3 ${isSpeaking ? 'text-violet-400 animate-pulse' : 'text-slate-500'}`} />
-                      </button>
-                    )}
-                  </div>
+                  {message.role !== 'system' && (
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-slate-600">
+                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      {message.role === 'assistant' && !message.isStreaming && message.content && (
+                        <button
+                          onClick={() => speakText(message.content)}
+                          disabled={isSpeaking}
+                          className="p-1 hover:bg-slate-700 rounded transition-colors"
+                          title="Speak"
+                        >
+                          <Volume2 className={`w-3 h-3 ${isSpeaking ? 'text-violet-400 animate-pulse' : 'text-slate-500'}`} />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -417,17 +591,30 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onMouseDown={startRecording}
-                onMouseUp={stopRecording}
-                onMouseLeave={stopRecording}
-                className={`p-3 rounded-xl transition-all ${
+                onClick={toggleRecording}
+                disabled={isProcessingVoice || isLoading}
+                className={`relative p-3 rounded-xl transition-all ${
                   isRecording 
-                    ? 'bg-rose-500 text-white animate-pulse' 
-                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                    ? 'bg-rose-500 text-white scale-110 shadow-lg shadow-rose-500/50 animate-pulse' 
+                    : isProcessingVoice
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:scale-105'
                 }`}
-                title="Hold to speak"
+                title={isRecording ? "Click to stop recording" : "Click to start recording"}
               >
-                {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                {isProcessingVoice ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : isRecording ? (
+                  <MicOff className="w-5 h-5" />
+                ) : (
+                  <Mic className="w-5 h-5" />
+                )}
+                {isRecording && (
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                  </span>
+                )}
               </button>
               
               <input
@@ -435,9 +622,9 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about sales, trends, insights..."
+                placeholder={isRecording ? "🎤 Recording... Click mic to stop" : "Ask about sales, trends, insights..."}
                 className="flex-1 bg-slate-700 border border-slate-600 rounded-xl px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-violet-500 transition-colors"
-                disabled={isLoading}
+                disabled={isLoading || isRecording}
               />
               
               <button
@@ -450,9 +637,28 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
             </div>
             
             {isRecording && (
-              <div className="mt-2 flex items-center gap-2 text-rose-400 text-sm">
-                <span className="w-2 h-2 bg-rose-500 rounded-full animate-pulse" />
-                Recording... Release to send
+              <div className="mt-2 flex items-center justify-between bg-rose-500/20 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 text-rose-400 text-sm">
+                  <span className="w-3 h-3 bg-rose-500 rounded-full animate-pulse" />
+                  <span className="font-medium">🎤 Recording... Speak now!</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-rose-300 text-sm font-mono">{recordingDuration.toFixed(1)}s</span>
+                  <button 
+                    type="button"
+                    onClick={stopRecording}
+                    className="text-rose-400 text-xs bg-rose-500/30 px-2 py-1 rounded hover:bg-rose-500/50"
+                  >
+                    Click mic to stop
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {isProcessingVoice && (
+              <div className="mt-2 flex items-center gap-2 bg-amber-500/20 rounded-lg px-3 py-2">
+                <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+                <span className="text-amber-400 text-sm">Processing your voice...</span>
               </div>
             )}
           </form>

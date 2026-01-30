@@ -313,3 +313,173 @@ async def get_analytics_summary(
             for row in cat_rows
         ]
     }
+
+
+@router.get("/returns-by-category")
+async def get_returns_by_category(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get returns (negative sales) breakdown by category for donut chart.
+    Shows which product categories have the most returns.
+    """
+    # Query returns (negative sales) grouped by category
+    query = select(
+        Item.category,
+        func.count(Sale.id).label('return_count'),
+        func.sum(func.abs(Sale.sales)).label('return_value')
+    ).join(
+        Item, Sale.item_id == Item.id
+    ).where(
+        Sale.sales < 0  # Returns have negative sales values
+    ).group_by(
+        Item.category
+    ).order_by(func.count(Sale.id).desc())
+    
+    result = await db.execute(query)
+    rows = result.fetchall()
+    
+    total_count = sum(row.return_count for row in rows)
+    total_value = sum(row.return_value for row in rows)
+    
+    category_data = []
+    for row in rows:
+        category_data.append({
+            "category": row.category,
+            "count": row.return_count,
+            "value": int(row.return_value),
+            "percentage": round((row.return_count / total_count * 100) if total_count > 0 else 0, 2)
+        })
+    
+    return {
+        "data": category_data,
+        "total_count": total_count,
+        "total_value": int(total_value)
+    }
+
+
+@router.get("/returns-by-store")
+async def get_returns_by_store(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get returns (negative sales) breakdown by store for bar chart.
+    Shows which stores have the most returns.
+    """
+    query = select(
+        Store.name.label('store_name'),
+        func.count(Sale.id).label('return_count'),
+        func.sum(func.abs(Sale.sales)).label('return_value')
+    ).join(
+        Store, Sale.store_id == Store.id
+    ).where(
+        Sale.sales < 0
+    ).group_by(
+        Store.name
+    ).order_by(func.count(Sale.id).desc())
+    
+    result = await db.execute(query)
+    rows = result.fetchall()
+    
+    total_count = sum(row.return_count for row in rows)
+    total_value = sum(row.return_value for row in rows)
+    
+    store_data = []
+    for row in rows:
+        store_data.append({
+            "store_name": row.store_name,
+            "count": row.return_count,
+            "value": int(row.return_value),
+            "percentage": round((row.return_count / total_count * 100) if total_count > 0 else 0, 2)
+        })
+    
+    return {
+        "data": store_data,
+        "total_count": total_count,
+        "total_value": int(total_value)
+    }
+
+
+@router.get("/returns-summary")
+async def get_returns_summary(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get comprehensive returns summary for the live returns feed component.
+    Includes today's returns, all-time stats, and recent return items.
+    """
+    from datetime import date
+    today = date.today()
+    
+    # Today's returns count and value
+    today_query = select(
+        func.count(Sale.id).label('count'),
+        func.sum(func.abs(Sale.sales)).label('value')
+    ).where(
+        and_(
+            Sale.sales < 0,
+            Sale.date == today
+        )
+    )
+    today_result = await db.execute(today_query)
+    today_row = today_result.fetchone()
+    
+    # All-time returns
+    alltime_query = select(
+        func.count(Sale.id).label('count'),
+        func.sum(func.abs(Sale.sales)).label('value')
+    ).where(Sale.sales < 0)
+    alltime_result = await db.execute(alltime_query)
+    alltime_row = alltime_result.fetchone()
+    
+    # Returns by store (top 5)
+    store_query = select(
+        Store.name.label('store'),
+        func.count(Sale.id).label('count'),
+        func.sum(func.abs(Sale.sales)).label('value')
+    ).join(Store, Sale.store_id == Store.id).where(Sale.sales < 0).group_by(Store.name).order_by(func.count(Sale.id).desc()).limit(5)
+    store_result = await db.execute(store_query)
+    store_rows = store_result.fetchall()
+    
+    # Returns by category (top 5)
+    cat_query = select(
+        Item.category,
+        func.count(Sale.id).label('count'),
+        func.sum(func.abs(Sale.sales)).label('value')
+    ).join(Item, Sale.item_id == Item.id).where(Sale.sales < 0).group_by(Item.category).order_by(func.count(Sale.id).desc()).limit(5)
+    cat_result = await db.execute(cat_query)
+    cat_rows = cat_result.fetchall()
+    
+    # Recent return items (last 20)
+    recent_query = select(
+        Sale.id,
+        Store.name.label('store_name'),
+        Item.name.label('item_name'),
+        Item.category,
+        func.abs(Sale.sales).label('quantity'),
+        Sale.created_at
+    ).join(Store, Sale.store_id == Store.id).join(Item, Sale.item_id == Item.id).where(
+        Sale.sales < 0
+    ).order_by(Sale.created_at.desc()).limit(20)
+    recent_result = await db.execute(recent_query)
+    recent_rows = recent_result.fetchall()
+    
+    return {
+        "today_count": today_row.count if today_row.count else 0,
+        "today_value": int(today_row.value) if today_row.value else 0,
+        "all_time_count": alltime_row.count if alltime_row.count else 0,
+        "all_time_value": int(alltime_row.value) if alltime_row.value else 0,
+        "by_store": [{"store": r.store, "count": r.count, "value": int(r.value)} for r in store_rows],
+        "by_category": [{"category": r.category, "count": r.count, "value": int(r.value)} for r in cat_rows],
+        "recent_items": [
+            {
+                "id": r.id,
+                "store_name": r.store_name,
+                "item_name": r.item_name,
+                "category": r.category,
+                "quantity": int(r.quantity),
+                "timestamp": r.created_at.isoformat() if r.created_at else None
+            }
+            for r in recent_rows
+        ]
+    }

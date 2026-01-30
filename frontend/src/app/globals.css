@@ -183,4 +183,58 @@ body {
       transform: translateX(0); 
     }
   }
+
+  /* Scale in animation for tooltips */
+  .animate-scale-in {
+    animation: scaleIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.8);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Bounce animation */
+  .animate-bounce-in {
+    animation: bounceIn 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  @keyframes bounceIn {
+    0% { transform: scale(0); opacity: 0; }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* Float animation for decorative elements */
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  /* Gradient shimmer effect for cards */
+  .gradient-shimmer {
+    background: linear-gradient(
+      120deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.1) 50%,
+      transparent 70%
+    );
+    background-size: 200% 100%;
+    animation: gradientShimmer 3s ease infinite;
+  }
+
+  @keyframes gradientShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
 }

@@ -5,7 +5,9 @@ import {
   StoreDistributionChart,
   TopItemsChart,
   CategoryBreakdownChart,
-  LiveStreamChart
+  LiveStreamChart,
+  ReturnsByCategoryChart,
+  ReturnsLiveFeed
 } from '@/components/charts';
 
 export default function Home() {
@@ -53,13 +55,28 @@ export default function Home() {
             <LiveStreamChart />
           </div>
 
-          {/* Charts Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Charts Grid - Sales Distribution */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
             {/* Store Distribution Pie Chart */}
             <StoreDistributionChart />
             
             {/* Category Breakdown Donut Chart */}
             <CategoryBreakdownChart />
+          </div>
+
+          {/* Returns Analysis Section */}
+          <div className="mb-6">
+            <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+              <span className="text-red-400">🔄</span>
+              Returns Analysis
+            </h3>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Returns by Category Donut Chart */}
+              <ReturnsByCategoryChart />
+              
+              {/* Live Returns Feed */}
+              <ReturnsLiveFeed />
+            </div>
           </div>
 
           {/* Top Items Bar Chart - Full Width */}

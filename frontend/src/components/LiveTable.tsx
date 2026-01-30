@@ -280,7 +280,9 @@ export default function LiveTable() {
                   key={sale.id}
                   className={`transition-all duration-500 ${
                     sale.isNew 
-                      ? 'animate-glow bg-cyan-500/10' 
+                      ? sale.sales < 0 
+                        ? 'animate-glow bg-rose-500/10' 
+                        : 'animate-glow bg-cyan-500/10'
                       : index % 2 === 0 
                         ? 'bg-slate-800/30' 
                         : 'bg-slate-900/30'
@@ -293,7 +295,11 @@ export default function LiveTable() {
                         {mounted ? formatTimestamp(sale.timestamp) : '--'}
                       </span>
                       <span className={`text-xs ${
-                        sale.isNew ? 'text-cyan-400 font-semibold' : 'text-slate-500'
+                        sale.isNew 
+                          ? sale.sales < 0 
+                            ? 'text-rose-400 font-semibold'
+                            : 'text-cyan-400 font-semibold' 
+                          : 'text-slate-500'
                       }`}>
                         {mounted ? getTimeAgo(sale.timestamp) : '--'}
                       </span>
@@ -303,8 +309,12 @@ export default function LiveTable() {
                   {/* Store Column */}
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                        <span className="text-xs font-bold text-purple-400">{sale.store_id}</span>
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                        sale.sales < 0 ? 'bg-rose-500/20' : 'bg-purple-500/20'
+                      }`}>
+                        <span className={`text-xs font-bold ${
+                          sale.sales < 0 ? 'text-rose-400' : 'text-purple-400'
+                        }`}>{sale.store_id}</span>
                       </div>
                       <div className="text-sm font-medium text-white">
                         {sale.store_name || `Store ${sale.store_id}`}
@@ -322,17 +332,27 @@ export default function LiveTable() {
                   {/* Sales Column */}
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-3 py-1.5 text-sm font-bold rounded-lg ${
-                      sale.isNew 
-                        ? 'bg-cyan-500/30 text-cyan-300' 
-                        : 'bg-slate-700/50 text-white'
+                      sale.sales < 0
+                        ? 'bg-rose-500/30 text-rose-300'
+                        : sale.isNew 
+                          ? 'bg-cyan-500/30 text-cyan-300' 
+                          : 'bg-slate-700/50 text-white'
                     }`}>
-                      {sale.sales}
+                      {sale.sales < 0 ? sale.sales : `+${sale.sales}`}
                     </span>
                   </td>
                   
                   {/* Status Column */}
                   <td className="px-6 py-4 whitespace-nowrap">
-                    {sale.is_streaming ? (
+                    {sale.sales < 0 ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-rose-500/20 text-rose-400 rounded-full">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-rose-500"></span>
+                        </span>
+                        Return
+                      </span>
+                    ) : sale.is_streaming ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-emerald-500/20 text-emerald-400 rounded-full">
                         <span className="relative flex h-1.5 w-1.5">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>

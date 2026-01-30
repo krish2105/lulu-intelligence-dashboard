@@ -11,9 +11,12 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
-  Cell
+  Cell,
+  ReferenceLine,
+  ComposedChart,
+  Line
 } from 'recharts';
-import { Activity, Zap, Clock, ShoppingBag, Store, TrendingUp, Package } from 'lucide-react';
+import { Activity, Zap, Clock, ShoppingBag, Store, TrendingUp, Package, ArrowDown, ArrowUp, RefreshCw } from 'lucide-react';
 
 interface StreamingDataPoint {
   timestamp: string;
@@ -21,6 +24,8 @@ interface StreamingDataPoint {
   item_name: string;
   sales: number;
   cumulative: number;
+  isReturn: boolean;
+  transactionType: string;
 }
 
 interface StoreItemMap {
@@ -39,6 +44,7 @@ interface LiveSaleEvent {
   store_name?: string;
   item_name?: string;
   category?: string;
+  isReturn?: boolean;
 }
 
 // Color palette for different categories/stores
@@ -49,6 +55,10 @@ export default function LiveStreamChart() {
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
   const [totalStreaming, setTotalStreaming] = useState(0);
+  const [totalReturns, setTotalReturns] = useState(0);
+  const [returnCount, setReturnCount] = useState(0);
+  const [todayReturns, setTodayReturns] = useState(0);
+  const [allTimeReturns, setAllTimeReturns] = useState(0);
   const [recentSales, setRecentSales] = useState<LiveSaleEvent[]>([]);
   const [storeItemMap, setStoreItemMap] = useState<StoreItemMap>({ stores: {}, items: {} });
   const [salesByStore, setSalesByStore] = useState<Record<string, number>>({});
@@ -58,6 +68,29 @@ export default function LiveStreamChart() {
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  // Fetch returns summary data from API
+  useEffect(() => {
+    const fetchReturnsSummary = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/analytics/returns-summary');
+        if (response.ok) {
+          const data = await response.json();
+          setTodayReturns(data.today_count || 0);
+          setAllTimeReturns(data.all_time_count || 0);
+          setReturnCount(data.today_count || 0);
+          setTotalReturns(data.today_value || 0);
+        }
+      } catch (error) {
+        console.error('Error fetching returns summary:', error);
+      }
+    };
+
+    fetchReturnsSummary();
+    // Refresh returns data every 30 seconds
+    const interval = setInterval(fetchReturnsSummary, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Fetch store and item mappings for enriching live data
@@ -135,6 +168,9 @@ export default function LiveStreamChart() {
       try {
         const saleData: LiveSaleEvent = JSON.parse(event.data);
         
+        // Detect if this is a return (negative sales value)
+        const isReturn = saleData.sales < 0;
+        
         // Enrich with store/item names
         const storeName = storeItemMap.stores[saleData.store_id] || `Store ${saleData.store_id}`;
         const itemInfo = storeItemMap.items[saleData.item_id] || { name: `Item ${saleData.item_id}`, category: 'General' };
@@ -143,14 +179,21 @@ export default function LiveStreamChart() {
           ...saleData,
           store_name: storeName,
           item_name: itemInfo.name,
-          category: itemInfo.category
+          category: itemInfo.category,
+          isReturn
         };
 
         // Add to recent sales (keep last 10)
         setRecentSales(prev => [enrichedSale, ...prev.slice(0, 9)]);
         
-        // Update totals
+        // Update totals (returns reduce the total)
         setTotalStreaming(prev => prev + saleData.sales);
+        
+        // Track returns separately
+        if (isReturn) {
+          setTotalReturns(prev => prev + Math.abs(saleData.sales));
+          setReturnCount(prev => prev + 1);
+        }
         
         // Update sales by store
         setSalesByStore(prev => ({
@@ -158,7 +201,7 @@ export default function LiveStreamChart() {
           [storeName]: (prev[storeName] || 0) + saleData.sales
         }));
         
-        // Update chart data
+        // Update chart data with return information
         setData(prev => {
           const lastCumulative = prev.length > 0 ? prev[prev.length - 1].cumulative : 0;
           const newPoint: StreamingDataPoint = {
@@ -166,7 +209,9 @@ export default function LiveStreamChart() {
             store_name: storeName,
             item_name: itemInfo.name,
             sales: saleData.sales,
-            cumulative: lastCumulative + saleData.sales
+            cumulative: lastCumulative + saleData.sales,
+            isReturn,
+            transactionType: isReturn ? 'RETURN' : 'SALE'
           };
           return [...prev.slice(-49), newPoint]; // Keep last 50 points
         });
@@ -234,8 +279,31 @@ export default function LiveStreamChart() {
   const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: StreamingDataPoint }> }) => {
     if (active && payload && payload.length) {
       const point = payload[0].payload;
+      const isReturn = point.isReturn || point.sales < 0;
+      
       return (
-        <div className="glass rounded-lg p-4 border border-slate-600 shadow-xl min-w-[180px]">
+        <div className={`glass rounded-lg p-4 border shadow-xl min-w-[200px] ${
+          isReturn ? 'border-rose-500/50 bg-rose-950/50' : 'border-slate-600'
+        }`}>
+          {/* Transaction Type Badge */}
+          <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold mb-2 ${
+            isReturn 
+              ? 'bg-rose-500/20 text-rose-400' 
+              : 'bg-emerald-500/20 text-emerald-400'
+          }`}>
+            {isReturn ? (
+              <>
+                <RefreshCw className="w-3 h-3" />
+                RETURN
+              </>
+            ) : (
+              <>
+                <ArrowUp className="w-3 h-3" />
+                SALE
+              </>
+            )}
+          </div>
+          
           <div className="flex items-center gap-2 mb-2">
             <Clock className="w-3 h-3 text-cyan-400" />
             <p className="text-white font-semibold text-sm">{mounted ? formatTime(point.timestamp) : '--'}</p>
@@ -252,8 +320,11 @@ export default function LiveStreamChart() {
           </div>
           <div className="flex items-center justify-between pt-2 border-t border-slate-700">
             <div>
-              <p className="text-xs text-slate-500">Sale</p>
-              <p className="text-cyan-400 font-bold text-lg">{point.sales}</p>
+              <p className="text-xs text-slate-500">{isReturn ? 'Returned' : 'Sold'}</p>
+              <p className={`font-bold text-lg ${isReturn ? 'text-rose-400' : 'text-cyan-400'}`}>
+                {isReturn ? `${Math.abs(point.sales)}` : point.sales}
+                {isReturn && <span className="text-xs ml-1">↓</span>}
+              </p>
             </div>
             <div className="text-right">
               <p className="text-xs text-slate-500">Cumulative</p>
@@ -294,14 +365,27 @@ export default function LiveStreamChart() {
           </div>
           <div>
             <h3 className="text-lg font-semibold text-white">Live Streaming Sales</h3>
-            <p className="text-xs text-slate-400">Real-time sales with item details</p>
+            <p className="text-xs text-slate-400">Real-time sales & returns with fluctuations</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {/* Net Total */}
           <div className="text-right">
-            <div className="text-2xl font-bold text-emerald-400">{formatNumber(totalStreaming)}</div>
-            <div className="text-xs text-slate-400">Total Streaming</div>
+            <div className={`text-2xl font-bold ${totalStreaming >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {formatNumber(totalStreaming)}
+            </div>
+            <div className="text-xs text-slate-400">Net Total</div>
           </div>
+          {/* Returns Counter */}
+          {returnCount > 0 && (
+            <div className="text-right px-3 py-1 bg-rose-500/10 rounded-lg border border-rose-500/20">
+              <div className="flex items-center gap-1 text-rose-400 text-sm font-bold">
+                <RefreshCw className="w-3 h-3" />
+                {returnCount}
+              </div>
+              <div className="text-xs text-rose-400/70">Returns</div>
+            </div>
+          )}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-rose-500/20">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-500 opacity-75"></span>
@@ -312,8 +396,8 @@ export default function LiveStreamChart() {
         </div>
       </div>
 
-      {/* Main Chart */}
-      <div className="h-[200px]">
+      {/* Main Chart - Shows cumulative with fluctuations */}
+      <div className="h-[220px]">
         {data.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-500">
             <div className="text-center">
@@ -324,15 +408,19 @@ export default function LiveStreamChart() {
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <ComposedChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="cumulativeGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
                   <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                <linearGradient id="positiveGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.3} />
+                </linearGradient>
+                <linearGradient id="negativeGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.3} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
@@ -346,14 +434,28 @@ export default function LiveStreamChart() {
                 interval="preserveStartEnd"
               />
               <YAxis 
+                yAxisId="cumulative"
+                orientation="left"
                 stroke="#64748b"
                 fontSize={11}
                 tickFormatter={formatNumber}
                 tickLine={false}
                 axisLine={{ stroke: '#334155' }}
               />
+              <YAxis 
+                yAxisId="sales"
+                orientation="right"
+                stroke="#64748b"
+                fontSize={10}
+                tickLine={false}
+                axisLine={false}
+                domain={['dataMin - 10', 'dataMax + 10']}
+              />
               <Tooltip content={<CustomTooltip />} />
+              <ReferenceLine yAxisId="sales" y={0} stroke="#475569" strokeDasharray="3 3" />
+              {/* Cumulative line - shows overall trend with dips */}
               <Area
+                yAxisId="cumulative"
                 type="monotone"
                 dataKey="cumulative"
                 stroke="#10b981"
@@ -362,13 +464,27 @@ export default function LiveStreamChart() {
                 dot={false}
                 activeDot={{ r: 6, fill: '#10b981', stroke: '#0f172a', strokeWidth: 2 }}
               />
-            </AreaChart>
+              {/* Sales bars - shows individual transactions with red for returns */}
+              <Bar 
+                yAxisId="sales" 
+                dataKey="sales" 
+                maxBarSize={20}
+              >
+                {data.map((entry, index) => (
+                  <Cell 
+                    key={`cell-${index}`} 
+                    fill={entry.sales < 0 ? '#f43f5e' : '#06b6d4'}
+                    fillOpacity={0.7}
+                  />
+                ))}
+              </Bar>
+            </ComposedChart>
           </ResponsiveContainer>
         )}
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-700/50">
+      <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-700/50">
         <div className="bg-slate-800/50 rounded-lg p-3 text-center">
           <TrendingUp className="w-4 h-4 text-cyan-400 mx-auto mb-1" />
           <div className="text-lg font-bold text-white">{data.length}</div>
@@ -382,7 +498,12 @@ export default function LiveStreamChart() {
         <div className="bg-slate-800/50 rounded-lg p-3 text-center">
           <ShoppingBag className="w-4 h-4 text-amber-400 mx-auto mb-1" />
           <div className="text-lg font-bold text-white">{data.length > 0 ? Math.round(totalStreaming / data.length) : 0}</div>
-          <div className="text-xs text-slate-500">Avg per Sale</div>
+          <div className="text-xs text-slate-500">Avg per Txn</div>
+        </div>
+        <div className={`rounded-lg p-3 text-center ${returnCount > 0 ? 'bg-rose-500/10 border border-rose-500/20' : 'bg-slate-800/50'}`}>
+          <RefreshCw className={`w-4 h-4 mx-auto mb-1 ${returnCount > 0 ? 'text-rose-400' : 'text-slate-500'}`} />
+          <div className={`text-lg font-bold ${returnCount > 0 ? 'text-rose-400' : 'text-slate-500'}`}>{returnCount}</div>
+          <div className="text-xs text-slate-500">Returns</div>
         </div>
       </div>
 
@@ -393,7 +514,16 @@ export default function LiveStreamChart() {
             <Activity className="w-4 h-4 text-rose-400" />
             <span className="text-sm font-medium text-white">Live Sales Feed</span>
           </div>
-          <span className="text-xs text-slate-500">{recentSales.length > 0 || data.length > 0 ? 'Updating in real-time' : 'Waiting...'}</span>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1 text-xs">
+              <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+              <span className="text-slate-500">Sale</span>
+            </span>
+            <span className="flex items-center gap-1 text-xs">
+              <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+              <span className="text-slate-500">Return</span>
+            </span>
+          </div>
         </div>
         
         <div className="space-y-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
@@ -401,28 +531,45 @@ export default function LiveStreamChart() {
             const isRecentSale = 'category' in sale;
             const saleItem = isRecentSale ? sale as LiveSaleEvent : null;
             const dataPoint = !isRecentSale ? sale as StreamingDataPoint : null;
+            const salesValue = saleItem?.sales ?? dataPoint?.sales ?? 0;
+            const isReturnItem = salesValue < 0 || saleItem?.isReturn || dataPoint?.isReturn;
             
             return (
               <div 
                 key={saleItem?.id || index}
                 className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-300 ${
-                  index === 0 && recentSales.length > 0
+                  isReturnItem
+                    ? 'bg-rose-500/10 border-rose-500/30'
+                    : index === 0 && recentSales.length > 0
                     ? 'bg-emerald-500/10 border-emerald-500/30 animate-pulse'
                     : 'bg-slate-800/50 border-slate-700/50'
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    index === 0 && recentSales.length > 0 ? 'bg-emerald-500/20' : 'bg-slate-700/50'
+                    isReturnItem 
+                      ? 'bg-rose-500/20' 
+                      : index === 0 && recentSales.length > 0 
+                      ? 'bg-emerald-500/20' 
+                      : 'bg-slate-700/50'
                   }`}>
-                    <ShoppingBag className={`w-5 h-5 ${index === 0 && recentSales.length > 0 ? 'text-emerald-400' : 'text-slate-400'}`} />
+                    {isReturnItem ? (
+                      <RefreshCw className="w-5 h-5 text-rose-400" />
+                    ) : (
+                      <ShoppingBag className={`w-5 h-5 ${index === 0 && recentSales.length > 0 ? 'text-emerald-400' : 'text-slate-400'}`} />
+                    )}
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-white">
                         {saleItem?.item_name || dataPoint?.item_name || 'Unknown Item'}
                       </span>
-                      {saleItem?.category && (
+                      {isReturnItem && (
+                        <span className="px-1.5 py-0.5 text-[10px] rounded bg-rose-500/20 text-rose-400 font-semibold">
+                          RETURN
+                        </span>
+                      )}
+                      {saleItem?.category && !isReturnItem && (
                         <span className="px-1.5 py-0.5 text-[10px] rounded bg-violet-500/20 text-violet-400">
                           {saleItem.category}
                         </span>
@@ -438,8 +585,10 @@ export default function LiveStreamChart() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-lg font-bold text-cyan-400">
-                    {saleItem?.sales || dataPoint?.sales || 0}
+                  <div className={`text-lg font-bold flex items-center gap-1 ${isReturnItem ? 'text-rose-400' : 'text-cyan-400'}`}>
+                    {isReturnItem && <ArrowDown className="w-4 h-4" />}
+                    {!isReturnItem && <ArrowUp className="w-4 h-4" />}
+                    {Math.abs(salesValue)}
                   </div>
                   <div className="text-xs text-slate-500">units</div>
                 </div>
