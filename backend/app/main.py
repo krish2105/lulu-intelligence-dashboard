@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 import asyncio
 from datetime import datetime
 
-from app.config import get_settings
+from app.config import get_settings, logger
 from app.services.database import init_db, close_db
 from app.services.redis_client import init_redis, close_redis
 from app.services.data_generator import DataGenerator
 from app.routes import sales, streaming, history, kpis, stream, analytics
 from app.routes import ai as ai_routes
+from app.middleware import RequestIDMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 
 settings = get_settings()
@@ -18,16 +19,26 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger.info("Starting Sales Dashboard API...")
+    logger.info(f"Environment: {settings.environment}")
+    
     await init_db()
+    logger.info("Database initialized")
+    
     await init_redis()
+    logger.info("Redis initialized")
     
     # Start the data generator background task
     generator = DataGenerator()
     task = asyncio.create_task(generator.start())
+    logger.info("Data generator started")
+    
+    logger.info("Sales Dashboard API is ready!")
     
     yield
     
     # Shutdown
+    logger.info("Shutting down Sales Dashboard API...")
     task.cancel()
     try:
         await task
@@ -35,6 +46,7 @@ async def lifespan(app: FastAPI):
         pass
     await close_db()
     await close_redis()
+    logger.info("Shutdown complete")
 
 
 app = FastAPI(
@@ -43,6 +55,19 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# =============================================================================
+# Middleware (order matters - first added = last executed)
+# =============================================================================
+
+# Security headers
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Rate limiting
+app.add_middleware(RateLimitMiddleware)
+
+# Request ID tracking and logging
+app.add_middleware(RequestIDMiddleware)
 
 # CORS middleware
 app.add_middleware(
@@ -80,22 +105,43 @@ async def get_latest_redirect():
 async def health_check():
     """
     Health check endpoint.
-    Returns: {"status":"healthy","database":"healthy","timestamp":"...","version":"1.0.0"}
+    Returns: {"status":"healthy","database":"healthy","redis":"healthy","timestamp":"...","version":"1.0.0"}
     """
     from app.services.database import engine
+    from app.services.redis_client import get_redis
     from sqlalchemy import text
     
+    # Check database
     try:
-        # Test database connection
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         db_status = "healthy"
     except Exception as e:
+        logger.error(f"Database health check failed: {e}")
         db_status = "unhealthy"
     
+    # Check Redis
+    try:
+        redis = await get_redis()
+        await redis.ping()
+        redis_status = "healthy"
+    except Exception as e:
+        logger.error(f"Redis health check failed: {e}")
+        redis_status = "unhealthy"
+    
+    # Overall status
+    if db_status == "healthy" and redis_status == "healthy":
+        overall_status = "healthy"
+    elif db_status == "unhealthy" and redis_status == "unhealthy":
+        overall_status = "unhealthy"
+    else:
+        overall_status = "degraded"
+    
     return {
-        "status": "healthy" if db_status == "healthy" else "degraded",
+        "status": overall_status,
         "database": db_status,
+        "redis": redis_status,
         "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "environment": settings.environment
     }
