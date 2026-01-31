@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS sales_historical (
     date DATE NOT NULL,
     store_id INTEGER NOT NULL REFERENCES stores(id),
     item_id INTEGER NOT NULL REFERENCES items(id),
-    sales INTEGER NOT NULL CHECK (sales >= 0),
+    sales INTEGER NOT NULL, -- Allows negative values for returns
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS sales_stream_raw (
     timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     store_id INTEGER NOT NULL REFERENCES stores(id),
     item_id INTEGER NOT NULL REFERENCES items(id),
-    sales INTEGER NOT NULL CHECK (sales >= 0),
+    sales INTEGER NOT NULL, -- Allows negative values for returns
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS sales (
     date DATE NOT NULL,
     store_id INTEGER NOT NULL REFERENCES stores(id),
     item_id INTEGER NOT NULL REFERENCES items(id),
-    sales INTEGER NOT NULL CHECK (sales >= 0),
+    sales INTEGER NOT NULL, -- Allows negative values for returns
     is_streaming BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -225,3 +225,146 @@ BEGIN
     RAISE NOTICE '📊 Unique stores: %', store_count;
     RAISE NOTICE '📊 Unique items: %', item_count;
 END $$;
+
+-- =============================================================================
+-- AUTHENTICATION & USER MANAGEMENT TABLES
+-- =============================================================================
+
+-- ENUM TYPES
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('super_admin', 'regional_manager', 'store_manager', 'analyst');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE user_status AS ENUM ('active', 'inactive', 'locked', 'pending');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+-- REGIONS TABLE
+CREATE TABLE IF NOT EXISTS regions (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO regions (code, name, description) VALUES 
+    ('dubai', 'Dubai Region', 'All Lulu stores in Dubai emirate'),
+    ('abu_dhabi', 'Abu Dhabi Region', 'All Lulu stores in Abu Dhabi emirate'),
+    ('northern_emirates', 'Northern Emirates Region', 'Stores in Sharjah, Ajman, RAK')
+ON CONFLICT (code) DO NOTHING;
+
+-- Update stores with region_id
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS region_id INTEGER REFERENCES regions(id);
+
+UPDATE stores SET region_id = (SELECT id FROM regions WHERE code = 'dubai') WHERE id IN (1, 2, 3);
+UPDATE stores SET region_id = (SELECT id FROM regions WHERE code = 'abu_dhabi') WHERE id IN (4, 5, 6);
+UPDATE stores SET region_id = (SELECT id FROM regions WHERE code = 'northern_emirates') WHERE id IN (7, 8, 9, 10);
+
+-- USERS TABLE
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    role user_role NOT NULL DEFAULT 'analyst',
+    status user_status NOT NULL DEFAULT 'active',
+    phone VARCHAR(20),
+    job_title VARCHAR(100),
+    department VARCHAR(100),
+    failed_login_attempts INTEGER DEFAULT 0,
+    locked_until TIMESTAMP WITH TIME ZONE,
+    password_changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    must_change_password BOOLEAN DEFAULT FALSE,
+    two_factor_enabled BOOLEAN DEFAULT FALSE,
+    two_factor_secret VARCHAR(100),
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    last_login_ip VARCHAR(45),
+    last_activity_at TIMESTAMP WITH TIME ZONE,
+    preferences JSONB DEFAULT '{}',
+    notification_settings JSONB DEFAULT '{"email": true, "in_app": true, "sms": false}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- USER PERMISSIONS TABLE
+CREATE TABLE IF NOT EXISTS user_permissions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    region_id INTEGER REFERENCES regions(id),
+    store_id INTEGER REFERENCES stores(id),
+    can_view BOOLEAN DEFAULT TRUE,
+    can_edit BOOLEAN DEFAULT FALSE,
+    can_delete BOOLEAN DEFAULT FALSE,
+    can_export BOOLEAN DEFAULT FALSE,
+    can_manage_users BOOLEAN DEFAULT FALSE,
+    can_manage_inventory BOOLEAN DEFAULT FALSE,
+    can_manage_promotions BOOLEAN DEFAULT FALSE,
+    can_view_financials BOOLEAN DEFAULT FALSE,
+    can_approve_transfers BOOLEAN DEFAULT FALSE,
+    valid_from DATE DEFAULT CURRENT_DATE,
+    valid_until DATE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- AUDIT LOG TABLE  
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    user_email VARCHAR(255),
+    action VARCHAR(50) NOT NULL,
+    resource_type VARCHAR(100),
+    resource_id VARCHAR(100),
+    description TEXT,
+    old_values JSONB,
+    new_values JSONB,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- INDEXES
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+
+-- =============================================================================
+-- INSERT DEFAULT USERS
+-- Password: Lulu@2026! (bcrypt hash)
+-- =============================================================================
+
+INSERT INTO users (email, password_hash, first_name, last_name, role, status, job_title, department) VALUES 
+    ('yash@lulu.ae', '$2b$12$ydZDowJdY8PjxC9O.8XlX.FuzEpaT4eNkimXs0at73I97pjJD8E3O', 'Yash', 'Patel', 'super_admin', 'active', 'Senior Vice President', 'Executive Leadership'),
+    ('krishna@lulu.ae', '$2b$12$ydZDowJdY8PjxC9O.8XlX.FuzEpaT4eNkimXs0at73I97pjJD8E3O', 'Krishna', 'Sharma', 'regional_manager', 'active', 'Senior Regional Manager', 'Operations'),
+    ('atharva@lulu.ae', '$2b$12$ydZDowJdY8PjxC9O.8XlX.FuzEpaT4eNkimXs0at73I97pjJD8E3O', 'Atharva', 'Desai', 'store_manager', 'active', 'Store Manager', 'Store Operations')
+ON CONFLICT (email) DO NOTHING;
+
+-- SET UP PERMISSIONS
+-- YASH (Senior VP) - Full access to all regions
+INSERT INTO user_permissions (user_id, region_id, can_view, can_edit, can_delete, can_export, can_manage_users, can_manage_inventory, can_manage_promotions, can_view_financials, can_approve_transfers)
+SELECT u.id, r.id, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE
+FROM users u, regions r
+WHERE u.email = 'yash@lulu.ae'
+ON CONFLICT DO NOTHING;
+
+-- KRISHNA (Senior Manager) - Dubai Region only
+INSERT INTO user_permissions (user_id, region_id, can_view, can_edit, can_delete, can_export, can_manage_users, can_manage_inventory, can_manage_promotions, can_view_financials, can_approve_transfers)
+SELECT u.id, r.id, TRUE, TRUE, FALSE, TRUE, FALSE, TRUE, TRUE, TRUE, TRUE
+FROM users u, regions r
+WHERE u.email = 'krishna@lulu.ae' AND r.code = 'dubai'
+ON CONFLICT DO NOTHING;
+
+-- ATHARVA (Store Manager) - Al Barsha store only (store_id = 1)
+INSERT INTO user_permissions (user_id, store_id, can_view, can_edit, can_delete, can_export, can_manage_users, can_manage_inventory, can_manage_promotions, can_view_financials, can_approve_transfers)
+SELECT u.id, 1, TRUE, TRUE, FALSE, TRUE, FALSE, TRUE, FALSE, FALSE, FALSE
+FROM users u
+WHERE u.email = 'atharva@lulu.ae'
+ON CONFLICT DO NOTHING;
+
+RAISE NOTICE '✅ Authentication system initialized with 3 users';
+

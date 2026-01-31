@@ -161,7 +161,7 @@ export default function LiveStreamChart() {
       eventSourceRef.current.close();
     }
 
-    const eventSource = new EventSource('http://localhost:8000/api/stream/sales');
+    const eventSource = new EventSource('http://localhost:8000/stream/sales');
     eventSourceRef.current = eventSource;
 
     eventSource.addEventListener('sales', (event) => {
@@ -590,7 +590,7 @@ export default function LiveStreamChart() {
                     {!isReturnItem && <ArrowUp className="w-4 h-4" />}
                     {Math.abs(salesValue)}
                   </div>
-                  <div className="text-xs text-slate-500">units</div>
+                  <div className="text-xs text-slate-500">Qty</div>
                 </div>
               </div>
             );

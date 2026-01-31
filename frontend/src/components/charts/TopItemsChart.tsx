@@ -79,7 +79,7 @@ export default function TopItemsChart() {
         <div className="glass rounded-lg p-3 border border-slate-600">
           <p className="text-white font-semibold text-sm">{item.item_name}</p>
           <p className="text-slate-400 text-xs mb-1">{item.category}</p>
-          <p className="text-cyan-400 font-bold">{formatNumber(item.total_sales)} units</p>
+          <p className="text-cyan-400 font-bold">{formatNumber(item.total_sales)} Units</p>
         </div>
       );
     }

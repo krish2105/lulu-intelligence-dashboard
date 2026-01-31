@@ -14,7 +14,7 @@
     "react-dom": "18.2.0",
     "recharts": "2.10.4",
     "lucide-react": "0.312.0",
-    "date-fns": "3.2.0"
+    "date-fns": "2.30.0"
   },
   "devDependencies": {
     "@types/node": "20.11.5",

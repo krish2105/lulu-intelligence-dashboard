@@ -91,8 +91,8 @@ export default function ReturnsByCategoryChart() {
       return (
         <div className="glass rounded-lg p-3 border border-red-500/30 shadow-lg">
           <p className="text-white font-semibold">{category.category}</p>
-          <p className="text-red-400 font-medium">{category.count} returns</p>
-          <p className="text-orange-400">{formatNumber(category.value)} units returned</p>
+          <p className="text-red-400 font-medium">{category.count} Returns</p>
+          <p className="text-orange-400">{formatNumber(category.value)} Units Returned</p>
           <p className="text-slate-400">{category.percentage.toFixed(1)}% of total returns</p>
         </div>
       );
@@ -220,13 +220,13 @@ export default function ReturnsByCategoryChart() {
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ marginTop: '60px' }}>
         <div className="text-center">
           <p className="text-3xl font-bold text-white">{formatNumber(totalValue)}</p>
-          <p className="text-slate-400 text-xs">Units Returned</p>
+          <p className="text-slate-400 text-xs">Units (Qty) Returned</p>
         </div>
       </div>
 
       {/* Legend */}
       <div className="mt-4 grid grid-cols-2 gap-2 max-h-[120px] overflow-y-auto">
-        {data.slice(0, 8).map((item, index) => (
+        {data.slice(0, 8).map((item: ReturnCategoryData, index: number) => (
           <div
             key={item.category}
             className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-700/30 transition-colors cursor-pointer"

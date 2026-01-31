@@ -6,9 +6,19 @@ interface MetricsCardProps {
   subtitle?: string;
   icon?: ReactNode;
   highlight?: boolean;
+  unit?: string;
+  currency?: boolean;
 }
 
-export default function MetricsCard({ title, value, subtitle, icon, highlight }: MetricsCardProps) {
+// Format number with optional currency (AED - UAE Dirhams)
+const formatValue = (value: number, currency?: boolean) => {
+  if (currency) {
+    return `AED ${value.toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return value.toLocaleString();
+};
+
+export default function MetricsCard({ title, value, subtitle, icon, highlight, unit = 'Units', currency }: MetricsCardProps) {
   return (
     <div className={`rounded-xl p-6 shadow-lg transition-all hover:shadow-xl ${
       highlight ? 'bg-gradient-to-br from-primary-500 to-primary-700 text-white' : 'bg-white'
@@ -19,9 +29,16 @@ export default function MetricsCard({ title, value, subtitle, icon, highlight }:
         </p>
         {icon}
       </div>
-      <p className={`text-3xl font-bold mt-2 ${highlight ? 'text-white' : 'text-gray-900'}`}>
-        {value.toLocaleString()}
-      </p>
+      <div className="flex items-baseline gap-2 mt-2">
+        <p className={`text-3xl font-bold ${highlight ? 'text-white' : 'text-gray-900'}`}>
+          {formatValue(value, currency)}
+        </p>
+        {!currency && (
+          <span className={`text-sm font-medium ${highlight ? 'text-primary-200' : 'text-gray-400'}`}>
+            {unit}
+          </span>
+        )}
+      </div>
       {subtitle && (
         <p className={`text-sm mt-1 ${highlight ? 'text-primary-200' : 'text-gray-400'}`}>
           {subtitle}

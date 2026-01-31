@@ -1,6 +1,7 @@
 """
 Analytics API Routes - C-Level Insights and Forecasting
 Provides aggregated data for charts and executive dashboards
+Optimized with Redis caching for performance
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, and_, text
@@ -10,7 +11,9 @@ from typing import Optional, List
 from pydantic import BaseModel
 
 from app.services.database import get_db
+from app.services.cache import get_cached, set_cached, generate_cache_key, CACHE_TTL
 from app.models.sales import Sale, Store, Item
+from app.config import logger
 
 router = APIRouter()
 
@@ -65,6 +68,12 @@ async def get_sales_trend(
     Get daily sales trend with optional forecasting.
     Returns historical data + 7-day forecast.
     """
+    # Check cache first
+    cache_key = generate_cache_key("analytics_trend", days=days, forecast=include_forecast)
+    cached = await get_cached(cache_key)
+    if cached:
+        return cached
+    
     # Get historical daily sales
     query = select(
         Sale.date,
@@ -107,7 +116,9 @@ async def get_sales_trend(
                 "forecast": max(0, forecast_value)
             })
     
-    return {"data": trend_data, "days": days}
+    response = {"data": trend_data, "days": days}
+    await set_cached(cache_key, response, CACHE_TTL['analytics'])
+    return response
 
 
 @router.get("/stores")
@@ -117,6 +128,12 @@ async def get_store_distribution(
     """
     Get sales distribution by store for pie chart.
     """
+    # Check cache first
+    cache_key = generate_cache_key("analytics_stores")
+    cached = await get_cached(cache_key)
+    if cached:
+        return cached
+    
     query = select(
         Sale.store_id,
         Store.name.label('store_name'),
@@ -141,7 +158,9 @@ async def get_store_distribution(
             "percentage": round((row.total_sales / total * 100) if total > 0 else 0, 2)
         })
     
-    return {"data": store_data, "total": total}
+    response = {"data": store_data, "total": total}
+    await set_cached(cache_key, response, CACHE_TTL['analytics'])
+    return response
 
 
 @router.get("/top-items")
@@ -152,6 +171,12 @@ async def get_top_items(
     """
     Get top selling items for bar chart.
     """
+    # Check cache first
+    cache_key = generate_cache_key("analytics_top_items", limit=limit)
+    cached = await get_cached(cache_key)
+    if cached:
+        return cached
+    
     query = select(
         Sale.item_id,
         Item.name.label('item_name'),
@@ -175,7 +200,9 @@ async def get_top_items(
             "total_sales": row.total_sales
         })
     
-    return {"data": items_data}
+    response = {"data": items_data}
+    await set_cached(cache_key, response, CACHE_TTL['analytics'])
+    return response
 
 
 @router.get("/categories")
@@ -185,6 +212,12 @@ async def get_category_breakdown(
     """
     Get sales breakdown by category for donut chart.
     """
+    # Check cache first
+    cache_key = generate_cache_key("analytics_categories")
+    cached = await get_cached(cache_key)
+    if cached:
+        return cached
+    
     query = select(
         Item.category,
         func.sum(Sale.sales).label('total_sales')
@@ -207,7 +240,9 @@ async def get_category_breakdown(
             "percentage": round((row.total_sales / total * 100) if total > 0 else 0, 2)
         })
     
-    return {"data": category_data, "total": total}
+    response = {"data": category_data, "total": total}
+    await set_cached(cache_key, response, CACHE_TTL['analytics'])
+    return response
 
 
 @router.get("/streaming-trend")

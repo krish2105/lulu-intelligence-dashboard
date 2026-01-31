@@ -168,7 +168,7 @@ export default function KPICards({ refreshInterval = 30000 }: KPICardsProps) {
     },
     weekly: {
       title: "Weekly Sales Volume",
-      description: "Total units sold across all stores and products in the last 7 days.",
+      description: "Total units (qty) sold across all stores and products in the last 7 days.",
       details: ["Rolling 7-day window", "Includes historical + live", "Trend compared to prior week"],
       color: "border-purple-500/50",
       icon: <BarChart3 className="w-4 h-4 text-purple-400" />
@@ -208,24 +208,36 @@ export default function KPICards({ refreshInterval = 30000 }: KPICardsProps) {
     setMounted(true);
   }, []);
 
-  const fetchKPIs = async () => {
+  const loadKPIs = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/kpis');
+      // Use cached API with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      
+      const response = await fetch('http://localhost:8000/api/kpis', {
+        signal: controller.signal,
+        headers: { 'Cache-Control': 'max-age=15' }
+      });
+      
+      clearTimeout(timeoutId);
+      
       if (!response.ok) throw new Error('Failed to fetch KPIs');
       const data = await response.json();
       setKpis(data);
       setError(null);
       setNextRefresh(refreshInterval / 1000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error fetching KPIs');
+      if ((err as Error).name !== 'AbortError') {
+        setError(err instanceof Error ? err.message : 'Error fetching KPIs');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchKPIs();
-    const interval = setInterval(fetchKPIs, refreshInterval);
+    loadKPIs();
+    const interval = setInterval(loadKPIs, refreshInterval);
     return () => clearInterval(interval);
   }, [refreshInterval]);
 

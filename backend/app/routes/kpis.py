@@ -1,16 +1,18 @@
 """
 KPIs API Routes - Key Performance Indicators
-Matches README: GET /api/kpis
+Optimized with Redis caching and efficient queries
 """
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, and_, case, text
+from sqlalchemy import select, func, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date, datetime, timedelta
 from pydantic import BaseModel
 from typing import Optional
 
 from app.services.database import get_db
-from app.models.sales import Sale, SalesStreamRaw
+from app.models.sales import Sale
+from app.services.cache import get_cached, set_cached, generate_cache_key, CACHE_TTL
+from app.config import logger
 
 router = APIRouter()
 
@@ -34,115 +36,106 @@ class KPIResponse(BaseModel):
 async def get_kpis(db: AsyncSession = Depends(get_db)):
     """
     Get key performance indicators for the dashboard.
-    
-    Example: GET /api/kpis
+    Optimized with single query and caching.
     """
+    # Check cache first
+    cache_key = generate_cache_key("kpis")
+    cached = await get_cached(cache_key)
+    if cached:
+        # Parse cached datetime strings back to proper types
+        if cached.get('data_range_start'):
+            cached['data_range_start'] = date.fromisoformat(cached['data_range_start'])
+        if cached.get('data_range_end'):
+            cached['data_range_end'] = date.fromisoformat(cached['data_range_end'])
+        if cached.get('last_stream_timestamp'):
+            cached['last_stream_timestamp'] = datetime.fromisoformat(cached['last_stream_timestamp'])
+        return KPIResponse(**cached)
+    
     today = date.today()
     week_ago = today - timedelta(days=7)
     month_ago = today - timedelta(days=30)
     two_weeks_ago = today - timedelta(days=14)
     
-    # Count historical records
-    hist_count_result = await db.execute(
-        select(func.count(Sale.id)).where(Sale.is_streaming == False)
-    )
-    total_historical = hist_count_result.scalar() or 0
-    
-    # Count streaming records
-    stream_count_result = await db.execute(
-        select(func.count(Sale.id)).where(Sale.is_streaming == True)
-    )
-    total_streaming = stream_count_result.scalar() or 0
-    
-    # Today's sales
-    today_result = await db.execute(
-        select(func.coalesce(func.sum(Sale.sales), 0))
-        .where(Sale.date == today)
-    )
-    total_sales_today = today_result.scalar() or 0
-    
-    # Week's sales
-    week_result = await db.execute(
-        select(func.coalesce(func.sum(Sale.sales), 0))
-        .where(Sale.date >= week_ago)
-    )
-    total_sales_week = week_result.scalar() or 0
-    
-    # Month's sales  
-    month_result = await db.execute(
-        select(func.coalesce(func.sum(Sale.sales), 0))
-        .where(Sale.date >= month_ago)
-    )
-    total_sales_month = month_result.scalar() or 0
-    
-    # Average daily sales
-    avg_result = await db.execute(
-        select(func.avg(Sale.sales))
-    )
-    average_daily_sales = round(float(avg_result.scalar() or 0), 2)
-    
-    # Unique stores and items
-    stores_result = await db.execute(
-        select(func.count(func.distinct(Sale.store_id)))
-    )
-    unique_stores = stores_result.scalar() or 0
-    
-    items_result = await db.execute(
-        select(func.count(func.distinct(Sale.item_id)))
-    )
-    unique_items = items_result.scalar() or 0
-    
-    # Date range
-    range_result = await db.execute(
-        select(func.min(Sale.date), func.max(Sale.date))
-        .where(Sale.is_streaming == False)
-    )
-    date_range = range_result.one()
-    
-    # Last streaming timestamp
-    last_stream_result = await db.execute(
-        select(Sale.created_at)
-        .where(Sale.is_streaming == True)
-        .order_by(Sale.created_at.desc())
-        .limit(1)
-    )
-    last_stream = last_stream_result.scalar()
-    
-    # Calculate sales trend (compare last week vs previous week)
-    last_week_result = await db.execute(
-        select(func.coalesce(func.sum(Sale.sales), 0))
-        .where(and_(Sale.date >= week_ago, Sale.date < today))
-    )
-    last_week_sales = last_week_result.scalar() or 0
-    
-    prev_week_result = await db.execute(
-        select(func.coalesce(func.sum(Sale.sales), 0))
-        .where(and_(Sale.date >= two_weeks_ago, Sale.date < week_ago))
-    )
-    prev_week_sales = prev_week_result.scalar() or 0
-    
-    if prev_week_sales > 0:
-        change = (last_week_sales - prev_week_sales) / prev_week_sales
-        if change > 0.05:
-            sales_trend = "up"
-        elif change < -0.05:
-            sales_trend = "down"
+    try:
+        # Single optimized query for all KPIs
+        result = await db.execute(text("""
+            SELECT 
+                COUNT(*) FILTER (WHERE is_streaming = false) as historical_count,
+                COUNT(*) FILTER (WHERE is_streaming = true) as streaming_count,
+                COALESCE(SUM(sales) FILTER (WHERE date = :today), 0)::integer as sales_today,
+                COALESCE(SUM(sales) FILTER (WHERE date >= :week_ago), 0)::integer as sales_week,
+                COALESCE(SUM(sales) FILTER (WHERE date >= :month_ago), 0)::integer as sales_month,
+                ROUND(AVG(sales)::numeric, 2) as avg_daily_sales,
+                COUNT(DISTINCT store_id) as unique_stores,
+                COUNT(DISTINCT item_id) as unique_items,
+                MIN(date) FILTER (WHERE is_streaming = false) as data_start,
+                MAX(date) FILTER (WHERE is_streaming = false) as data_end,
+                MAX(created_at) FILTER (WHERE is_streaming = true) as last_stream,
+                COALESCE(SUM(sales) FILTER (WHERE date >= :week_ago AND date < :today), 0)::integer as last_week_sales,
+                COALESCE(SUM(sales) FILTER (WHERE date >= :two_weeks_ago AND date < :week_ago), 0)::integer as prev_week_sales
+            FROM sales
+        """), {
+            "today": today,
+            "week_ago": week_ago,
+            "month_ago": month_ago,
+            "two_weeks_ago": two_weeks_ago
+        })
+        row = result.fetchone()
+        
+        # Calculate trend
+        if row.prev_week_sales and row.prev_week_sales > 0:
+            change = (row.last_week_sales - row.prev_week_sales) / row.prev_week_sales
+            if change > 0.05:
+                sales_trend = "up"
+            elif change < -0.05:
+                sales_trend = "down"
+            else:
+                sales_trend = "stable"
         else:
             sales_trend = "stable"
-    else:
-        sales_trend = "stable"
-    
-    return KPIResponse(
-        total_historical_records=total_historical,
-        total_streaming_records=total_streaming,
-        total_sales_today=total_sales_today,
-        total_sales_week=total_sales_week,
-        total_sales_month=total_sales_month,
-        average_daily_sales=average_daily_sales,
-        unique_stores=unique_stores,
-        unique_items=unique_items,
-        data_range_start=date_range[0],
-        data_range_end=date_range[1],
-        last_stream_timestamp=last_stream,
-        sales_trend=sales_trend
-    )
+        
+        response_data = {
+            "total_historical_records": row.historical_count or 0,
+            "total_streaming_records": row.streaming_count or 0,
+            "total_sales_today": row.sales_today or 0,
+            "total_sales_week": row.sales_week or 0,
+            "total_sales_month": row.sales_month or 0,
+            "average_daily_sales": float(row.avg_daily_sales or 0),
+            "unique_stores": row.unique_stores or 0,
+            "unique_items": row.unique_items or 0,
+            "data_range_start": row.data_start,
+            "data_range_end": row.data_end,
+            "last_stream_timestamp": row.last_stream,
+            "sales_trend": sales_trend
+        }
+        
+        # Cache result (serialize dates for caching)
+        cache_data = response_data.copy()
+        if cache_data['data_range_start']:
+            cache_data['data_range_start'] = cache_data['data_range_start'].isoformat()
+        if cache_data['data_range_end']:
+            cache_data['data_range_end'] = cache_data['data_range_end'].isoformat()
+        if cache_data['last_stream_timestamp']:
+            cache_data['last_stream_timestamp'] = cache_data['last_stream_timestamp'].isoformat()
+        
+        await set_cached(cache_key, cache_data, CACHE_TTL['kpis'])
+        
+        return KPIResponse(**response_data)
+        
+    except Exception as e:
+        logger.error(f"KPIs query error: {e}")
+        # Return safe defaults on error
+        return KPIResponse(
+            total_historical_records=0,
+            total_streaming_records=0,
+            total_sales_today=0,
+            total_sales_week=0,
+            total_sales_month=0,
+            average_daily_sales=0.0,
+            unique_stores=0,
+            unique_items=0,
+            data_range_start=None,
+            data_range_end=None,
+            last_stream_timestamp=None,
+            sales_trend="stable"
+        )

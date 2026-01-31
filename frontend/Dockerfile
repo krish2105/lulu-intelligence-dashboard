@@ -11,8 +11,11 @@ RUN npm install --legacy-peer-deps
 # Copy source code
 COPY . .
 
+# Build for production to avoid chunk loading issues
+RUN npm run build
+
 # Expose port
 EXPOSE 3000
 
-# Development command
-CMD ["npm", "run", "dev"]
+# Run in production mode
+CMD ["npm", "start"]

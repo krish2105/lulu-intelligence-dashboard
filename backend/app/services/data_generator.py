@@ -21,13 +21,13 @@ class DataGenerator:
     - Random promotional bursts and slow periods
     """
     
-    # Transaction type weights (more realistic retail mix)
+    # Transaction type weights (more realistic retail mix with HIGH return visibility)
     TRANSACTION_TYPES = {
-        'regular_sale': 0.62,      # Normal sales
-        'promotional_sale': 0.12,   # Higher volume promotional sales
-        'return': 0.15,             # Customer returns (negative) - INCREASED
-        'bulk_purchase': 0.06,      # Large orders
-        'slow_period': 0.05         # Very low sales during slow times
+        'regular_sale': 0.45,       # Normal sales - reduced to increase returns
+        'promotional_sale': 0.10,   # Higher volume promotional sales
+        'return': 0.30,             # Customer returns (negative) - HIGH RATE FOR VISIBILITY
+        'bulk_purchase': 0.08,      # Large orders
+        'slow_period': 0.07         # Very low sales during slow times
     }
     
     # Return reasons for realism
@@ -94,9 +94,9 @@ class DataGenerator:
         """Determine transaction type with weighted random selection"""
         rand = random.random()
         
-        # FORCE more returns randomly (to ensure data exists)
-        if random.random() < 0.15:  # 15% chance to force a return
-            print(f"🔄 FORCING RETURN (random check passed)")
+        # FORCE more returns randomly (HIGH RATE for visibility)
+        if random.random() < 0.30:  # 30% chance to force a return for high visibility
+            print(f"🔄 FORCING RETURN (random check passed - 30% force rate)")
             return 'return'
         
         cumulative = 0
@@ -106,15 +106,15 @@ class DataGenerator:
         
         # Higher returns during bad market sentiment
         if self.market_sentiment < 0.8:
-            adjusted_weights['return'] = 0.20  # More returns in bad times
-            adjusted_weights['regular_sale'] = 0.55
+            adjusted_weights['return'] = 0.40  # Even more returns in bad times
+            adjusted_weights['regular_sale'] = 0.40
             adjusted_weights['slow_period'] = 0.10
         
-        # Even in good sentiment, keep reasonable return rate
+        # Even in good sentiment, keep HIGH return rate for visibility
         elif self.market_sentiment > 1.3:
             adjusted_weights['bulk_purchase'] = 0.10
             adjusted_weights['promotional_sale'] = 0.15
-            adjusted_weights['return'] = 0.10  # Still have returns in good times
+            adjusted_weights['return'] = 0.25  # High returns even in good times
         
         for trans_type, weight in adjusted_weights.items():
             cumulative += weight
@@ -210,8 +210,8 @@ class DataGenerator:
         # Determine transaction type
         transaction_type = self._get_transaction_type()
         
-        # Allow more consecutive returns (was too restrictive)
-        if self.consecutive_returns >= 5 and transaction_type == 'return':
+        # Allow more consecutive returns (increased limit for visibility)
+        if self.consecutive_returns >= 10 and transaction_type == 'return':  # Increased from 5 to 10
             transaction_type = 'regular_sale'
         
         async with async_session() as session:
@@ -219,10 +219,11 @@ class DataGenerator:
             store_id = random.randint(1, 10)
             item_id = random.randint(1, 50)
             
-            # Certain items have higher return rates (electronics, perishables)
-            high_return_items = [5, 12, 18, 25, 33, 41, 48]  # Simulated high-return items
-            if item_id in high_return_items and random.random() < 0.15:
+            # Certain items have MUCH higher return rates (electronics, perishables)
+            high_return_items = [1, 5, 8, 12, 15, 18, 22, 25, 28, 33, 38, 41, 45, 48, 50]  # Many high-return items
+            if item_id in high_return_items and random.random() < 0.40:  # 40% return rate for these items
                 transaction_type = 'return'
+                print(f"🔄 HIGH-RETURN ITEM triggered: Item {item_id}")
             
             # Fetch store and item names
             store_result = await session.execute(

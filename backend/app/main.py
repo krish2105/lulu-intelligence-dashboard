@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sse_starlette.sse import EventSourceResponse
 from contextlib import asynccontextmanager
 import asyncio
 from datetime import datetime
@@ -8,8 +9,10 @@ from app.config import get_settings, logger
 from app.services.database import init_db, close_db
 from app.services.redis_client import init_redis, close_redis
 from app.services.data_generator import DataGenerator
-from app.routes import sales, streaming, history, kpis, stream, analytics
+from app.services.metrics import get_metrics
+from app.routes import sales, streaming, history, kpis, stream, analytics, auth
 from app.routes import ai as ai_routes
+from app.routes import inventory, promotions, alerts, admin, reports, monitoring
 from app.middleware import RequestIDMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 
@@ -92,6 +95,13 @@ app.include_router(kpis.router, prefix="/api/kpis", tags=["KPIs"])
 app.include_router(stream.router, prefix="/stream", tags=["Stream"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["Analytics"])
 app.include_router(ai_routes.router, prefix="/api/ai", tags=["AI Assistant"])
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(inventory.router, prefix="/api/inventory", tags=["Inventory Management"])
+app.include_router(promotions.router, prefix="/api/promotions", tags=["Promotions & Pricing"])
+app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts & Notifications"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
+app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
 
 # Also mount /api/latest from stream router
 @app.get("/api/latest", tags=["Stream"])
@@ -99,6 +109,14 @@ async def get_latest_redirect():
     """Redirect to stream latest endpoint"""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/stream/latest")
+
+
+# Handle legacy /api/stream/sales requests - redirect to /stream/sales
+@app.get("/api/stream/sales", tags=["Stream"])
+async def stream_sales_redirect(request: Request):
+    """SSE endpoint for real-time sales streaming (legacy URL support)"""
+    from app.routes.stream import event_generator
+    return EventSourceResponse(event_generator(request))
 
 
 @app.get("/health")

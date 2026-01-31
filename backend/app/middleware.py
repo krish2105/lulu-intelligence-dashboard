@@ -1,6 +1,6 @@
 """
 Middleware components for the Sales Dashboard API.
-Includes Request ID tracking and Rate Limiting.
+Optimized for minimal latency - reduced logging overhead.
 """
 import time
 import uuid
@@ -18,48 +18,34 @@ settings = get_settings()
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """
-    Middleware to add a unique request ID to each request.
-    The ID is added to both the request state and response headers.
+    Lightweight middleware for request ID tracking.
+    Optimized: Minimal logging to reduce latency.
     """
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Generate unique request ID
-        request_id = str(uuid.uuid4())[:8]  # Short UUID for readability
-        
-        # Add to request state for use in logging
+        request_id = str(uuid.uuid4())[:8]
         request.state.request_id = request_id
         
-        # Log the incoming request
-        logger.info(
-            f"[{request_id}] {request.method} {request.url.path} - Started"
-        )
-        
+        # Skip verbose logging for performance - only log errors
         start_time = time.time()
         
         try:
             response = await call_next(request)
-            
-            # Calculate processing time
             process_time = time.time() - start_time
             
-            # Add headers to response
+            # Add minimal headers
             response.headers["X-Request-ID"] = request_id
-            response.headers["X-Process-Time"] = f"{process_time:.4f}"
+            response.headers["X-Process-Time"] = f"{process_time:.3f}"
             
-            # Log the response
-            logger.info(
-                f"[{request_id}] {request.method} {request.url.path} - "
-                f"Status: {response.status_code} - Time: {process_time:.4f}s"
-            )
+            # Only log slow requests (>500ms) in production
+            if process_time > 0.5:
+                logger.warning(f"[{request_id}] SLOW: {request.method} {request.url.path} - {process_time:.3f}s")
             
             return response
             
         except Exception as e:
-            process_time = time.time() - start_time
-            logger.error(
-                f"[{request_id}] {request.method} {request.url.path} - "
-                f"Error: {str(e)} - Time: {process_time:.4f}s"
-            )
+            logger.error(f"[{request_id}] ERROR: {request.method} {request.url.path} - {str(e)}")
             raise
 
 

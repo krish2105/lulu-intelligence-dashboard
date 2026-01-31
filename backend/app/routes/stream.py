@@ -119,3 +119,83 @@ async def stream_sales(request: Request):
     - event: sales - New sale data
     """
     return EventSourceResponse(event_generator(request))
+
+
+@router.post("/generate-returns")
+async def generate_returns(
+    count: int = Query(50, ge=10, le=200, description="Number of returns to generate"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate bulk return records immediately for visibility in charts.
+    This creates immediate return data that will show in all return graphs.
+    """
+    import random
+    from datetime import date, timedelta
+    from app.services.redis_client import publish_sale
+    
+    # Get stores and items
+    stores_result = await db.execute(select(Store))
+    stores = list(stores_result.scalars().all())
+    
+    items_result = await db.execute(select(Item))
+    items = list(items_result.scalars().all())
+    
+    if not stores or not items:
+        return {"error": "No stores or items found", "generated": 0}
+    
+    generated_returns = []
+    today = date.today()
+    
+    for i in range(count):
+        store = random.choice(stores)
+        item = random.choice(items)
+        
+        # Generate return value (negative, between -5 and -50)
+        return_value = -random.randint(5, 50)
+        
+        # Random date in the last 7 days (some today, some recent)
+        days_ago = random.choices([0, 0, 0, 1, 1, 2, 3, 4, 5, 6], k=1)[0]  # Weighted toward today
+        return_date = today - timedelta(days=days_ago)
+        
+        sale = Sale(
+            date=return_date,
+            store_id=store.id,
+            item_id=item.id,
+            sales=return_value,
+            is_streaming=True
+        )
+        
+        db.add(sale)
+        await db.flush()  # Get the ID
+        
+        return_data = {
+            'id': sale.id,
+            'date': sale.date.isoformat(),
+            'store_id': sale.store_id,
+            'store_name': store.name,
+            'item_id': sale.item_id,
+            'item_name': item.name,
+            'category': item.category,
+            'sales': sale.sales,
+            'is_streaming': True,
+            'created_at': sale.created_at.isoformat() if sale.created_at else datetime.now().isoformat(),
+            'timestamp': datetime.now().isoformat(),
+            'transaction_type': 'return',
+            'transaction_label': '🔄 RETURN',
+            'return_reason': random.choice(['defective', 'wrong_item', 'changed_mind', 'expired', 'quality_issue']),
+            'is_return': True
+        }
+        
+        generated_returns.append(return_data)
+        
+        # Publish to Redis for live updates
+        await publish_sale(return_data)
+    
+    await db.commit()
+    
+    return {
+        "message": f"Generated {count} return records for visibility",
+        "generated": count,
+        "sample_returns": generated_returns[:5]
+    }

@@ -84,19 +84,19 @@ export default function ReturnsLiveFeed() {
               isNew: true
             };
 
-            setLiveReturns(prev => {
+            setLiveReturns((prev: ReturnItem[]) => {
               const updated = [newReturn, ...prev.slice(0, 9)];
               // Remove highlight after animation
               setTimeout(() => {
-                setLiveReturns(current =>
-                  current.map(r => r.id === newReturn.id ? { ...r, isNew: false } : r)
+                setLiveReturns((current: ReturnItem[]) =>
+                  current.map((r: ReturnItem) => r.id === newReturn.id ? { ...r, isNew: false } : r)
                 );
               }, 3000);
               return updated;
             });
 
             // Update stats
-            setStats(prev => prev ? {
+            setStats((prev: ReturnStats | null) => prev ? {
               ...prev,
               today_count: prev.today_count + 1,
               today_value: prev.today_value + Math.abs(sale.sales)
@@ -189,7 +189,7 @@ export default function ReturnsLiveFeed() {
             <span className="text-xs text-slate-400">Today&apos;s Value</span>
           </div>
           <div className="text-lg font-bold text-rose-400">
-            {(stats?.today_value || 0).toLocaleString()} <span className="text-xs font-normal">units</span>
+            {(stats?.today_value || 0).toLocaleString()} <span className="text-xs font-normal">Units</span>
           </div>
         </div>
         <div className="bg-slate-800/50 rounded-lg p-3">
@@ -198,7 +198,7 @@ export default function ReturnsLiveFeed() {
             <span className="text-xs text-slate-400">All-Time</span>
           </div>
           <div className="text-lg font-bold text-amber-400">
-            {stats?.all_time_count || 0} <span className="text-xs font-normal">returns</span>
+            {stats?.all_time_count || 0} <span className="text-xs font-normal">Returns</span>
           </div>
         </div>
       </div>
@@ -218,7 +218,7 @@ export default function ReturnsLiveFeed() {
               <p className="text-xs text-slate-600 mt-1">Returns will appear here in real-time</p>
             </div>
           ) : (
-            liveReturns.map((item, index) => (
+            liveReturns.map((item: ReturnItem, index: number) => (
               <div
                 key={`${item.id}-${index}`}
                 className={`p-3 rounded-lg border transition-all duration-500 ${
@@ -255,7 +255,7 @@ export default function ReturnsLiveFeed() {
                       <TrendingDown className="w-4 h-4" />
                       {item.quantity}
                     </div>
-                    <div className="text-xs text-slate-500">units</div>
+                    <div className="text-xs text-slate-500">Qty</div>
                   </div>
                 </div>
               </div>
@@ -269,7 +269,7 @@ export default function ReturnsLiveFeed() {
         <div className="mt-4 pt-3 border-t border-slate-700/50">
           <div className="text-xs text-slate-400 mb-2">Top Return Categories</div>
           <div className="flex flex-wrap gap-2">
-            {stats.by_category.slice(0, 4).map((cat, i) => (
+            {stats.by_category.slice(0, 4).map((cat: { category: string; count: number; value: number }) => (
               <span
                 key={cat.category}
                 className="px-2 py-1 text-xs rounded-full bg-slate-800/50 text-slate-300"

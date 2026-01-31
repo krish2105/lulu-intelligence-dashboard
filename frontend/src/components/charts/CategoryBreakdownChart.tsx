@@ -75,7 +75,7 @@ export default function CategoryBreakdownChart() {
       return (
         <div className="glass rounded-lg p-3 border border-slate-600">
           <p className="text-white font-semibold">{category.category}</p>
-          <p className="text-emerald-400">{formatNumber(category.total_sales)} units</p>
+          <p className="text-emerald-400">{formatNumber(category.total_sales)} Units</p>
           <p className="text-slate-400">{category.percentage.toFixed(1)}% of total</p>
         </div>
       );
