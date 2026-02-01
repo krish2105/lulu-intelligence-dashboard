@@ -15,8 +15,10 @@ import {
   User,
   Minimize2,
   Maximize2,
-  Sparkles
+  Sparkles,
+  Lock
 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Web Speech API types
 interface SpeechRecognitionEvent extends Event {
@@ -76,6 +78,15 @@ interface ChatBotProps {
 }
 
 export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
+  const { user, hasPermission, hasRole } = useAuth();
+  
+  // Permission checks - super_admin and regional_manager get full access
+  // store_manager gets chat only, analyst gets restricted access
+  const canUseChat = hasRole(['super_admin', 'regional_manager', 'store_manager']) || 
+                     hasPermission('can_use_ai_chat');
+  const canUseVoice = hasRole(['super_admin', 'regional_manager']) || 
+                      hasPermission('can_use_voice_chat');
+  
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '0',
@@ -453,6 +464,52 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
 
   if (!isOpen) return null;
 
+  // If user doesn't have chat permission, show restricted message
+  if (!canUseChat) {
+    return (
+      <div className={`fixed right-0 top-0 h-full bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col z-50 w-[400px]`}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-slate-600 to-slate-700 border-b border-slate-700">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
+              <Lock className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-white font-semibold">Lulu AI</h2>
+              <p className="text-white/70 text-xs">Restricted Access</p>
+            </div>
+          </div>
+          <button
+            onClick={onToggle}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            title="Close"
+          >
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+        
+        {/* Restricted Access Message */}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-700/50 flex items-center justify-center">
+              <Lock className="w-8 h-8 text-slate-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-white mb-2">Access Restricted</h3>
+            <p className="text-slate-400 text-sm mb-4">
+              You don't have permission to use the AI assistant.
+            </p>
+            <p className="text-slate-500 text-xs">
+              Contact your administrator to request access.
+            </p>
+            <p className="text-slate-600 text-xs mt-2">
+              Logged in as: {user?.email || 'Unknown'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`fixed right-0 top-0 h-full bg-slate-900 border-l border-slate-700 shadow-2xl flex flex-col z-50 transition-all duration-300 ${
       isMinimized ? 'w-16' : 'w-[400px]'
@@ -589,33 +646,45 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
           {/* Input */}
           <form onSubmit={handleSubmit} className="p-4 border-t border-slate-700 bg-slate-800/50">
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={toggleRecording}
-                disabled={isProcessingVoice || isLoading}
-                className={`relative p-3 rounded-xl transition-all ${
-                  isRecording 
-                    ? 'bg-rose-500 text-white scale-110 shadow-lg shadow-rose-500/50 animate-pulse' 
-                    : isProcessingVoice
-                    ? 'bg-amber-500 text-white'
-                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:scale-105'
-                }`}
-                title={isRecording ? "Click to stop recording" : "Click to start recording"}
-              >
-                {isProcessingVoice ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : isRecording ? (
-                  <MicOff className="w-5 h-5" />
-                ) : (
-                  <Mic className="w-5 h-5" />
-                )}
-                {isRecording && (
-                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
-                  </span>
-                )}
-              </button>
+              {/* Voice Button - only show if user has voice permission */}
+              {canUseVoice ? (
+                <button
+                  type="button"
+                  onClick={toggleRecording}
+                  disabled={isProcessingVoice || isLoading}
+                  className={`relative p-3 rounded-xl transition-all ${
+                    isRecording 
+                      ? 'bg-rose-500 text-white scale-110 shadow-lg shadow-rose-500/50 animate-pulse' 
+                      : isProcessingVoice
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:scale-105'
+                  }`}
+                  title={isRecording ? "Click to stop recording" : "Click to start recording"}
+                >
+                  {isProcessingVoice ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : isRecording ? (
+                    <MicOff className="w-5 h-5" />
+                  ) : (
+                    <Mic className="w-5 h-5" />
+                  )}
+                  {isRecording && (
+                    <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+                    </span>
+                  )}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="relative p-3 rounded-xl bg-slate-700/50 text-slate-500 cursor-not-allowed"
+                  title="Voice chat not available for your role"
+                >
+                  <Lock className="w-5 h-5" />
+                </button>
+              )}
               
               <input
                 ref={inputRef}

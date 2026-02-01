@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Tag, Percent, Calendar, TrendingUp, Gift, Clock,
-  Search, Filter, Plus, RefreshCw, ChevronRight, AlertCircle
+  Search, Filter, Plus, RefreshCw, ChevronRight, AlertCircle, X
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -63,6 +63,7 @@ export default function PromotionsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'active' | 'scheduled' | 'ended' | 'all'>('active');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showNewPromotionModal, setShowNewPromotionModal] = useState(false);
 
   const canManagePromotions = hasPermission('can_manage_promotions');
 
@@ -324,13 +325,194 @@ export default function PromotionsPage() {
               Manage promotional campaigns and track discount performance
             </p>
           </div>
-          {canManagePromotions && (
-            <button className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
-              <Plus className="w-5 h-5" />
-              New Promotion
-            </button>
-          )}
+          <button 
+            type="button"
+            onClick={() => setShowNewPromotionModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            New Promotion
+          </button>
         </div>
+
+        {/* Add Promotion Modal - Simple inline like Admin page */}
+        {showNewPromotionModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-lg p-6 m-4">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Add New Promotion</h2>
+                <button
+                  onClick={() => setShowNewPromotionModal(false)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <form className="space-y-4" onSubmit={async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const name = formData.get('name') as string;
+                const description = formData.get('description') as string;
+                const discount_type = formData.get('discount_type') as 'percentage' | 'fixed' | 'bogo';
+                const discount_value = parseFloat(formData.get('discount_value') as string);
+                const category = formData.get('category') as string;
+                const start_date = formData.get('start_date') as string;
+                const end_date = formData.get('end_date') as string;
+                
+                const promotion = {
+                  name,
+                  description,
+                  discount_type,
+                  discount_value,
+                  category,
+                  start_date,
+                  end_date,
+                  store_ids: [1,2,3,4,5,6,7,8,9,10]
+                };
+                
+                try {
+                  const res = await authFetch('/api/promotions/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(promotion)
+                  });
+                  
+                  if (res.ok) {
+                    const result = await res.json();
+                    // Create new promotion object to add to state
+                    const newPromotion: Promotion = {
+                      id: result.promotion_id || Date.now(),
+                      name,
+                      description,
+                      discount_type,
+                      discount_value,
+                      start_date: new Date(start_date).toISOString(),
+                      end_date: new Date(end_date).toISOString(),
+                      category,
+                      redemption_count: 0,
+                      total_discount_given: 0,
+                      days_remaining: Math.ceil((new Date(end_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+                      status: new Date(start_date) <= new Date() ? 'active' : 'scheduled'
+                    };
+                    
+                    // Add to active promotions if status is active
+                    if (newPromotion.status === 'active') {
+                      setActivePromotions(prev => [newPromotion, ...prev]);
+                    }
+                    // Add to all promotions list
+                    setAllPromotions(prev => [newPromotion, ...prev]);
+                    // Update summary count
+                    setSummary(prev => prev ? {
+                      ...prev,
+                      active_promotions: newPromotion.status === 'active' ? prev.active_promotions + 1 : prev.active_promotions,
+                      scheduled_promotions: newPromotion.status === 'scheduled' ? prev.scheduled_promotions + 1 : prev.scheduled_promotions
+                    } : prev);
+                    
+                    setShowNewPromotionModal(false);
+                  } else if (res.status === 403) {
+                    alert('⛔ You are not authorized to create promotions. Please contact your administrator.');
+                  } else {
+                    const error = await res.json();
+                    alert(`Failed to create promotion: ${error.detail || 'Unknown error'}`);
+                  }
+                } catch (err) {
+                  alert('Network error. Please try again.');
+                }
+              }}>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Promotion Name</label>
+                  <input
+                    name="name"
+                    type="text"
+                    required
+                    className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="Weekend Special"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                  <input
+                    name="description"
+                    type="text"
+                    required
+                    className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="Get discounts on selected items"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Type</label>
+                    <select name="discount_type" className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                      <option value="percentage">Percentage Off</option>
+                      <option value="fixed">Fixed Amount</option>
+                      <option value="bogo">Buy One Get One</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Discount Value</label>
+                    <input
+                      name="discount_value"
+                      type="number"
+                      required
+                      defaultValue="10"
+                      className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      placeholder="10"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category</label>
+                  <select name="category" className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <option value="Dairy">Dairy</option>
+                    <option value="Fruits">Fruits</option>
+                    <option value="Vegetables">Vegetables</option>
+                    <option value="Meat">Meat</option>
+                    <option value="Beverages">Beverages</option>
+                    <option value="Bakery">Bakery</option>
+                    <option value="Household">Household</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Start Date</label>
+                    <input
+                      name="start_date"
+                      type="date"
+                      required
+                      defaultValue={new Date().toISOString().split('T')[0]}
+                      className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">End Date</label>
+                    <input
+                      name="end_date"
+                      type="date"
+                      required
+                      defaultValue={new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0]}
+                      className="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPromotionModal(false)}
+                    className="flex-1 px-4 py-2 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                  >
+                    Create Promotion
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">

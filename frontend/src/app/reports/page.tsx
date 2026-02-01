@@ -4,13 +4,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   BarChart3, TrendingUp, TrendingDown, DollarSign, 
   Calendar, Download, Filter, RefreshCw, Store,
-  ShoppingCart, Package, Users, ArrowUpRight, ArrowDownRight
+  ShoppingCart, Package, Users, ArrowUpRight, ArrowDownRight, FileText
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area
 } from 'recharts';
+import { exportReportsPDF } from '@/lib/pdfExport';
 
 interface SalesTrend {
   date: string;
@@ -61,66 +62,81 @@ export default function ReportsPage() {
   });
 
   const canViewFinancials = hasPermission('can_view_financials');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     fetchData();
   }, [dateRange, selectedStore]);
 
-  const handleExport = () => {
-    // Create comprehensive CSV content
-    const sections: string[] = [];
-    
-    // KPIs Section
-    sections.push('=== KEY PERFORMANCE INDICATORS ===');
-    sections.push(`Total Sales,${kpis.totalSales}`);
-    sections.push(`Total Transactions,${kpis.totalTransactions}`);
-    sections.push(`Average Basket Size,${kpis.avgBasketSize}`);
-    sections.push(`Sales Growth (%),${kpis.salesGrowth}`);
-    sections.push('');
-    
-    // Sales Trend Section
-    sections.push('=== DAILY SALES TREND ===');
-    sections.push('Date,Sales,Transactions');
-    salesTrend.forEach(row => {
-      sections.push(`${row.date},${row.sales},${row.transactions}`);
-    });
-    sections.push('');
-    
-    // Category Sales Section
-    sections.push('=== CATEGORY SALES ===');
-    sections.push('Category,Sales,Percentage');
-    categorySales.forEach(row => {
-      sections.push(`${row.category},${row.sales},${row.percentage}%`);
-    });
-    sections.push('');
-    
-    // Store Performance Section
-    sections.push('=== STORE PERFORMANCE ===');
-    sections.push('Store,Location,Sales,Growth (%)');
-    storeSales.forEach(row => {
-      sections.push(`${row.store_name},${row.location},${row.sales},${row.growth}`);
-    });
-    sections.push('');
-    
-    // Top Items Section
-    sections.push('=== TOP SELLING ITEMS ===');
-    sections.push('Item,Category,Total Sales,Quantity');
-    topItems.forEach(row => {
-      sections.push(`${row.item_name},${row.category},${row.total_sales},${row.quantity}`);
-    });
-    
-    const csvContent = sections.join('\n');
-    
-    // Create and trigger download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `sales_report_${dateRange}_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await exportReportsPDF(
+        kpis,
+        salesTrend,
+        categorySales,
+        storeSales,
+        topItems,
+        dateRange
+      );
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      // Fallback to CSV export
+      const sections: string[] = [];
+      
+      // KPIs Section
+      sections.push('=== KEY PERFORMANCE INDICATORS ===');
+      sections.push(`Total Sales,${kpis.totalSales}`);
+      sections.push(`Total Transactions,${kpis.totalTransactions}`);
+      sections.push(`Average Basket Size,${kpis.avgBasketSize}`);
+      sections.push(`Sales Growth (%),${kpis.salesGrowth}`);
+      sections.push('');
+      
+      // Sales Trend Section
+      sections.push('=== DAILY SALES TREND ===');
+      sections.push('Date,Sales,Transactions');
+      salesTrend.forEach(row => {
+        sections.push(`${row.date},${row.sales},${row.transactions}`);
+      });
+      sections.push('');
+      
+      // Category Sales Section
+      sections.push('=== CATEGORY SALES ===');
+      sections.push('Category,Sales,Percentage');
+      categorySales.forEach(row => {
+        sections.push(`${row.category},${row.sales},${row.percentage}%`);
+      });
+      sections.push('');
+      
+      // Store Performance Section
+      sections.push('=== STORE PERFORMANCE ===');
+      sections.push('Store,Location,Sales,Growth (%)');
+      storeSales.forEach(row => {
+        sections.push(`${row.store_name},${row.location},${row.sales},${row.growth}`);
+      });
+      sections.push('');
+      
+      // Top Items Section
+      sections.push('=== TOP SELLING ITEMS ===');
+      sections.push('Item,Category,Total Sales,Quantity');
+      topItems.forEach(row => {
+        sections.push(`${row.item_name},${row.category},${row.total_sales},${row.quantity}`);
+      });
+      
+      const csvContent = sections.join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `sales_report_${dateRange}_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const fetchData = async () => {
@@ -324,10 +340,11 @@ export default function ReportsPage() {
             {/* Export */}
             <button 
               onClick={handleExport}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              disabled={exporting}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="w-5 h-5" />
-              Export
+              <Download className={`w-5 h-5 ${exporting ? 'animate-bounce' : ''}`} />
+              {exporting ? 'Exporting...' : 'Export PDF'}
             </button>
           </div>
         </div>

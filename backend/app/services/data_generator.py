@@ -21,13 +21,13 @@ class DataGenerator:
     - Random promotional bursts and slow periods
     """
     
-    # Transaction type weights (more realistic retail mix with HIGH return visibility)
+    # Transaction type weights - Realistic retail return rates (10-15%)
     TRANSACTION_TYPES = {
-        'regular_sale': 0.45,       # Normal sales - reduced to increase returns
+        'regular_sale': 0.65,       # Normal sales (majority of transactions)
         'promotional_sale': 0.10,   # Higher volume promotional sales
-        'return': 0.30,             # Customer returns (negative) - HIGH RATE FOR VISIBILITY
+        'return': 0.12,             # Customer returns (negative) - realistic 10-15% rate
         'bulk_purchase': 0.08,      # Large orders
-        'slow_period': 0.07         # Very low sales during slow times
+        'slow_period': 0.05         # Very low sales during slow times
     }
     
     # Return reasons for realism
@@ -94,9 +94,8 @@ class DataGenerator:
         """Determine transaction type with weighted random selection"""
         rand = random.random()
         
-        # FORCE more returns randomly (HIGH RATE for visibility)
-        if random.random() < 0.30:  # 30% chance to force a return for high visibility
-            print(f"🔄 FORCING RETURN (random check passed - 30% force rate)")
+        # Realistic occasional forced return (simulates real-world patterns)
+        if random.random() < 0.08:  # ~8% additional chance for return (total ~10-15%)
             return 'return'
         
         cumulative = 0
@@ -104,23 +103,21 @@ class DataGenerator:
         # Adjust weights based on market conditions
         adjusted_weights = self.TRANSACTION_TYPES.copy()
         
-        # Higher returns during bad market sentiment
+        # Slightly higher returns during bad market sentiment (realistic)
         if self.market_sentiment < 0.8:
-            adjusted_weights['return'] = 0.40  # Even more returns in bad times
-            adjusted_weights['regular_sale'] = 0.40
-            adjusted_weights['slow_period'] = 0.10
+            adjusted_weights['return'] = 0.18  # Up to 18% in bad times
+            adjusted_weights['regular_sale'] = 0.55
+            adjusted_weights['slow_period'] = 0.12
         
-        # Even in good sentiment, keep HIGH return rate for visibility
+        # Good sentiment - slightly fewer returns
         elif self.market_sentiment > 1.3:
-            adjusted_weights['bulk_purchase'] = 0.10
+            adjusted_weights['bulk_purchase'] = 0.12
             adjusted_weights['promotional_sale'] = 0.15
-            adjusted_weights['return'] = 0.25  # High returns even in good times
+            adjusted_weights['return'] = 0.08  # Lower returns in good times
         
         for trans_type, weight in adjusted_weights.items():
             cumulative += weight
             if rand <= cumulative:
-                if trans_type == 'return':
-                    print(f"🔄 Selected RETURN via weights (rand={rand:.3f})")
                 return trans_type
         
         return 'regular_sale'
@@ -210,20 +207,19 @@ class DataGenerator:
         # Determine transaction type
         transaction_type = self._get_transaction_type()
         
-        # Allow more consecutive returns (increased limit for visibility)
-        if self.consecutive_returns >= 10 and transaction_type == 'return':  # Increased from 5 to 10
-            transaction_type = 'regular_sale'
+        # Limit consecutive returns for realistic patterns
+        if self.consecutive_returns >= 3 and transaction_type == 'return':
+            transaction_type = 'regular_sale'  # Realistic: rarely more than 3 returns in a row
         
         async with async_session() as session:
             # Randomly select store and item
             store_id = random.randint(1, 10)
             item_id = random.randint(1, 50)
             
-            # Certain items have MUCH higher return rates (electronics, perishables)
-            high_return_items = [1, 5, 8, 12, 15, 18, 22, 25, 28, 33, 38, 41, 45, 48, 50]  # Many high-return items
-            if item_id in high_return_items and random.random() < 0.40:  # 40% return rate for these items
+            # Certain items have higher return rates (electronics, perishables) - realistic 20-25%
+            high_return_items = [1, 5, 12, 25, 38, 50]  # Problem items (electronics, perishables)
+            if item_id in high_return_items and random.random() < 0.20:  # 20% return rate for problem items
                 transaction_type = 'return'
-                print(f"🔄 HIGH-RETURN ITEM triggered: Item {item_id}")
             
             # Fetch store and item names
             store_result = await session.execute(

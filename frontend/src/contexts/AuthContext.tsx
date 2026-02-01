@@ -227,14 +227,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ...(token ? { 'Authorization': `Bearer ${token}` } : {})
     };
 
-    const response = await fetch(url, { ...options, headers });
+    // Prepend API_URL if the url starts with /api
+    const fullUrl = url.startsWith('/api') ? `${API_URL}${url}` : url;
+
+    const response = await fetch(fullUrl, { ...options, headers });
 
     // If unauthorized, try to refresh token
     if (response.status === 401) {
       const refreshed = await refreshTokenInternal();
       if (refreshed) {
         const newToken = localStorage.getItem(ACCESS_TOKEN_KEY);
-        return fetch(url, {
+        return fetch(fullUrl, {
           ...options,
           headers: {
             ...options.headers,
@@ -328,7 +331,10 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
     ...getAuthHeader()
   };
 
-  const response = await fetch(url, { ...options, headers });
+  // Prepend API_URL if the url starts with /api
+  const fullUrl = url.startsWith('/api') ? `${API_URL}${url}` : url;
+
+  const response = await fetch(fullUrl, { ...options, headers });
 
   // If unauthorized, try to refresh token
   if (response.status === 401) {
@@ -346,7 +352,7 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
         localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh_token);
 
         // Retry original request
-        return fetch(url, {
+        return fetch(fullUrl, {
           ...options,
           headers: {
             ...options.headers,

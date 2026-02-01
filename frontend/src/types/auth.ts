@@ -30,6 +30,8 @@ export interface UserPermissions {
   can_manage_promotions: boolean;
   can_view_financials: boolean;
   can_approve_transfers: boolean;
+  can_use_ai_chat?: boolean;
+  can_use_voice_chat?: boolean;
 }
 
 export interface LoginCredentials {

@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   BarChart3, TrendingUp, TrendingDown, Target, Activity,
   Calendar, Download, RefreshCw, Store, Package, Users,
-  ArrowUpRight, ArrowDownRight, Percent, DollarSign, ShoppingCart
+  ArrowUpRight, ArrowDownRight, Percent, DollarSign, ShoppingCart,
+  FileText
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -12,6 +13,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   ComposedChart, Scatter
 } from 'recharts';
+import { exportAnalyticsPDF } from '@/lib/pdfExport';
 
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 
@@ -179,22 +181,36 @@ export default function AnalyticsPage() {
     setRefreshing(false);
   };
 
-  const handleExport = () => {
-    // Create CSV content
-    const headers = ['Date', 'Sales', 'Transactions', 'Avg Basket'];
-    const rows = salesData.map(d => [d.date, d.sales, d.transactions, d.avgBasket]);
-    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
-    
-    // Create and download file
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `analytics_${dateRange}_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await exportAnalyticsPDF(
+        kpis,
+        salesData.map(d => ({ date: d.date, sales: d.sales, transactions: d.transactions })),
+        categoryData.map(c => ({ category: c.category, sales: c.sales, percentage: c.percentage })),
+        dateRange
+      );
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      // Fallback to CSV if PDF fails
+      const headers = ['Date', 'Sales', 'Transactions', 'Avg Basket'];
+      const rows = salesData.map(d => [d.date, d.sales, d.transactions, d.avgBasket]);
+      const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `analytics_${dateRange}_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const formatCurrency = (value: number) => {
@@ -256,10 +272,20 @@ export default function AnalyticsPage() {
             </button>
             <button
               onClick={handleExport}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700"
+              disabled={exporting}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="w-5 h-5" />
-              Export
+              {exporting ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-5 h-5" />
+                  Export PDF
+                </>
+              )}
             </button>
           </div>
         </div>
