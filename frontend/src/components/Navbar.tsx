@@ -20,7 +20,14 @@ import {
   Menu,
   X,
   ShoppingBag,
-  Activity
+  Activity,
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  CheckCircle,
+  ChevronRight,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { ROLE_DISPLAY_NAMES, UserRole } from '@/types/auth';
 import { ReactNode } from 'react';
@@ -31,6 +38,16 @@ interface NavItem {
   icon: ReactNode;
   roles?: UserRole[];
   permission?: string;
+}
+
+interface NotificationItem {
+  id: number;
+  title: string;
+  message: string;
+  type: 'critical' | 'warning' | 'info' | 'success';
+  category: 'inventory' | 'sales' | 'system' | 'promotion';
+  time: string;
+  read: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -81,6 +98,14 @@ const navItems: NavItem[] = [
   }
 ];
 
+// Notification type config
+const notificationConfig = {
+  critical: { icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' },
+  warning: { icon: AlertCircle, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/30' },
+  info: { icon: Info, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+  success: { icon: CheckCircle, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
+};
+
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -88,20 +113,140 @@ export default function Navbar() {
   
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [alertCount, setAlertCount] = useState(3);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
 
-  // Close user menu when clicking outside
+  // Load theme from localStorage
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' | null;
+    if (savedTheme) {
+      setTheme(savedTheme);
+      document.documentElement.classList.toggle('light', savedTheme === 'light');
+    }
+  }, []);
+
+  // Toggle theme
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+    document.documentElement.classList.toggle('light', newTheme === 'light');
+  };
+
+  // SSE Connection for real-time notifications
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connectSSE = () => {
+      // Connect to alerts stream
+      eventSource = new EventSource('http://localhost:8000/stream/alerts');
+
+      eventSource.addEventListener('connected', () => {
+        console.log('Connected to alerts stream');
+      });
+
+      eventSource.addEventListener('alert', (event) => {
+        try {
+          const alert = JSON.parse(event.data);
+          const newNotification: NotificationItem = {
+            id: alert.id,
+            title: alert.title,
+            message: alert.message,
+            type: alert.severity === 'critical' ? 'critical' : 
+                  alert.severity === 'warning' ? 'warning' : 
+                  alert.severity === 'success' ? 'success' : 'info',
+            category: alert.category || 'inventory',
+            time: 'Just now',
+            read: false,
+          };
+          
+          setNotifications(prev => {
+            // Avoid duplicates and keep max 15 notifications
+            const exists = prev.some(n => n.id === newNotification.id);
+            if (exists) return prev;
+            return [newNotification, ...prev].slice(0, 15);
+          });
+        } catch (e) {
+          console.error('Failed to parse alert:', e);
+        }
+      });
+
+      eventSource.onerror = () => {
+        console.log('Alerts stream connection lost, reconnecting...');
+        eventSource?.close();
+        // Reconnect after 5 seconds
+        reconnectTimeout = setTimeout(connectSSE, 5000);
+      };
+    };
+
+    // Start SSE connection
+    connectSSE();
+
+    // Also fetch initial notifications
+    const fetchInitialNotifications = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/alerts/recent?limit=10');
+        if (response.ok) {
+          const data = await response.json();
+          const apiNotifications = (data.alerts || []).map((alert: any) => ({
+            id: alert.id,
+            title: alert.title,
+            message: alert.message,
+            type: alert.severity === 'critical' ? 'critical' : alert.severity === 'warning' ? 'warning' : 'info',
+            category: alert.alert_type || 'inventory',
+            time: alert.time_ago || 'Recently',
+            read: alert.status !== 'active'
+          }));
+          setNotifications(prev => {
+            const merged = [...prev, ...apiNotifications];
+            // Deduplicate by id
+            const unique = merged.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
+            return unique.slice(0, 15);
+          });
+        }
+      } catch (error) {
+        console.error('Failed to fetch initial notifications:', error);
+      }
+    };
+
+    fetchInitialNotifications();
+
+    return () => {
+      eventSource?.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, [isAuthenticated]);
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  // Close menus when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
         setUserMenuOpen(false);
+      }
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setNotificationOpen(false);
       }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const markAsRead = (id: number) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+  };
+
+  const markAllAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -153,15 +298,122 @@ export default function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-3">
-            {/* Alerts Button */}
-            <button className="relative p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/50 transition-all">
-              <Bell className="w-5 h-5" />
-              {alertCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
-                  {alertCount}
-                </span>
-              )}
+            {/* Theme Toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/50 transition-all"
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            >
+              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
+
+            {/* Notifications Button & Panel */}
+            <div className="relative" ref={notificationRef}>
+              <button 
+                onClick={() => setNotificationOpen(!notificationOpen)}
+                className="relative p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/50 transition-all"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notification Dropdown Panel */}
+              {notificationOpen && (
+                <div className="absolute right-0 mt-2 w-96 bg-slate-800 rounded-xl border border-slate-700/50 shadow-2xl overflow-hidden z-50">
+                  {/* Header */}
+                  <div className="px-4 py-3 bg-slate-700/50 border-b border-slate-600/50 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Bell className="w-4 h-4 text-cyan-400" />
+                      <span className="font-semibold text-white">Notifications</span>
+                      {unreadCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 text-xs font-medium">
+                          {unreadCount} new
+                        </span>
+                      )}
+                      {/* Live Streaming Indicator */}
+                      <div className="flex items-center gap-1 ml-2">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                        </span>
+                        <span className="text-xs text-green-400 font-medium">LIVE</span>
+                      </div>
+                    </div>
+                    {unreadCount > 0 && (
+                      <button 
+                        onClick={markAllAsRead}
+                        className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Notification List */}
+                  <div className="max-h-96 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-8 text-center">
+                        <Bell className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                        <p className="text-slate-400">No notifications yet</p>
+                      </div>
+                    ) : (
+                      notifications.map((notification) => {
+                        const config = notificationConfig[notification.type];
+                        const Icon = config.icon;
+                        return (
+                          <div
+                            key={notification.id}
+                            onClick={() => markAsRead(notification.id)}
+                            className={`px-4 py-3 border-b border-slate-700/50 hover:bg-slate-700/30 cursor-pointer transition-all ${
+                              !notification.read ? 'bg-slate-700/20' : ''
+                            }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className={`p-2 rounded-lg ${config.bg}`}>
+                                <Icon className={`w-4 h-4 ${config.color}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className={`text-sm font-medium ${!notification.read ? 'text-white' : 'text-slate-300'}`}>
+                                    {notification.title}
+                                  </p>
+                                  {!notification.read && (
+                                    <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-400 mt-0.5 truncate">{notification.message}</p>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${config.bg} ${config.color}`}>
+                                    {notification.category}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">{notification.time}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="px-4 py-3 bg-slate-700/30 border-t border-slate-600/50">
+                    <Link
+                      href="/alerts"
+                      onClick={() => setNotificationOpen(false)}
+                      className="flex items-center justify-center gap-2 text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+                    >
+                      <span>View all alerts</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* User Menu */}
             <div className="relative" ref={userMenuRef}>

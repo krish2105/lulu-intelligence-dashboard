@@ -130,6 +130,96 @@ export default function AdminPage() {
       created_at: '2025-02-01T00:00:00Z',
       last_login: '2026-01-29T09:15:00Z'
     },
+    {
+      id: 4,
+      email: 'rahul.inv@lulu.ae',
+      first_name: 'Rahul',
+      last_name: 'Verma',
+      role: 'inventory_manager',
+      is_active: true,
+      created_at: '2025-03-01T00:00:00Z',
+      last_login: '2026-01-31T08:45:00Z'
+    },
+    {
+      id: 5,
+      email: 'priya.sales@lulu.ae',
+      first_name: 'Priya',
+      last_name: 'Sharma',
+      role: 'sales_executive',
+      is_active: true,
+      created_at: '2025-03-15T00:00:00Z',
+      last_login: '2026-01-31T09:00:00Z'
+    },
+    {
+      id: 6,
+      email: 'ahmed.cashier@lulu.ae',
+      first_name: 'Ahmed',
+      last_name: 'Hassan',
+      role: 'cashier',
+      is_active: true,
+      created_at: '2025-04-01T00:00:00Z',
+      last_login: '2026-01-31T07:30:00Z'
+    },
+    {
+      id: 7,
+      email: 'security@lulu.ae',
+      first_name: 'Mohammed',
+      last_name: 'Ali',
+      role: 'security',
+      is_active: true,
+      created_at: '2025-04-15T00:00:00Z',
+      last_login: '2026-01-31T06:00:00Z'
+    },
+    {
+      id: 8,
+      email: 'sara.support@lulu.ae',
+      first_name: 'Sara',
+      last_name: 'Khan',
+      role: 'inventory_support',
+      is_active: true,
+      created_at: '2025-05-01T00:00:00Z',
+      last_login: '2026-01-30T16:00:00Z'
+    },
+    {
+      id: 9,
+      email: 'intern.sales@lulu.ae',
+      first_name: 'Ali',
+      last_name: 'Raza',
+      role: 'sales_intern',
+      is_active: true,
+      created_at: '2025-06-01T00:00:00Z',
+      last_login: '2026-01-31T10:00:00Z'
+    },
+    {
+      id: 10,
+      email: 'procurement@lulu.ae',
+      first_name: 'Fatima',
+      last_name: 'Noor',
+      role: 'procurement_officer',
+      is_active: true,
+      created_at: '2025-02-15T00:00:00Z',
+      last_login: '2026-01-31T11:00:00Z'
+    },
+    {
+      id: 11,
+      email: 'warehouse@lulu.ae',
+      first_name: 'Ravi',
+      last_name: 'Singh',
+      role: 'warehouse_supervisor',
+      is_active: true,
+      created_at: '2025-03-10T00:00:00Z',
+      last_login: '2026-01-31T05:30:00Z'
+    },
+    {
+      id: 12,
+      email: 'customer.service@lulu.ae',
+      first_name: 'Aisha',
+      last_name: 'Malik',
+      role: 'customer_service',
+      is_active: true,
+      created_at: '2025-04-20T00:00:00Z',
+      last_login: '2026-01-31T09:30:00Z'
+    },
   ];
 
   const generateMockStores = (): StoreInfo[] => [
@@ -164,6 +254,24 @@ export default function AdminPage() {
         return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400';
       case 'store_manager':
         return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400';
+      case 'inventory_manager':
+        return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
+      case 'procurement_officer':
+        return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
+      case 'warehouse_supervisor':
+        return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400';
+      case 'sales_executive':
+        return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'cashier':
+        return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+      case 'security':
+        return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+      case 'inventory_support':
+        return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400';
+      case 'sales_intern':
+        return 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400';
+      case 'customer_service':
+        return 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400';
       default:
         return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400';
     }
@@ -543,6 +651,16 @@ export default function AdminPage() {
                   <option value="store_manager">Store Manager</option>
                   <option value="regional_manager">Regional Manager</option>
                   <option value="super_admin">Super Admin</option>
+                  <option value="inventory_manager">Inventory Manager</option>
+                  <option value="procurement_officer">Procurement Officer</option>
+                  <option value="warehouse_supervisor">Warehouse Supervisor</option>
+                  <option value="sales_executive">Sales Executive</option>
+                  <option value="analyst">Business Analyst</option>
+                  <option value="customer_service">Customer Service</option>
+                  <option value="inventory_support">Inventory Support</option>
+                  <option value="cashier">Cashier</option>
+                  <option value="sales_intern">Sales Intern</option>
+                  <option value="security">Security</option>
                 </select>
               </div>
               <div>

@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Package, AlertTriangle, TrendingDown, TrendingUp, 
   Search, Filter, RefreshCw, ArrowRightLeft, 
-  ChevronDown, ChevronUp, Building2, Box
+  ChevronDown, ChevronUp, Building2, Box, Bell,
+  ShoppingCart, Check, X, Clock, Truck, AlertCircle,
+  CheckCircle, FileText, Download
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -41,6 +43,27 @@ interface CategoryData {
   low_stock_count: number;
 }
 
+interface ProcurementItem {
+  id: number;
+  item: InventoryItem;
+  suggestedQuantity: number;
+  status: 'pending' | 'approved' | 'rejected' | 'ordered';
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  createdAt: string;
+  notes?: string;
+}
+
+interface InventoryAlert {
+  id: number;
+  item_name: string;
+  store_name: string;
+  type: 'out_of_stock' | 'low_stock' | 'overstocked' | 'reorder';
+  message: string;
+  severity: 'critical' | 'warning' | 'info';
+  timestamp: string;
+  acknowledged: boolean;
+}
+
 const statusColors = {
   in_stock: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
   low_stock: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
@@ -55,6 +78,13 @@ const statusLabels = {
   overstocked: 'Overstocked',
 };
 
+const priorityColors = {
+  critical: 'bg-red-500 text-white',
+  high: 'bg-orange-500 text-white',
+  medium: 'bg-yellow-500 text-black',
+  low: 'bg-blue-500 text-white',
+};
+
 export default function InventoryPage() {
   const { user, authFetch, hasPermission } = useAuth();
   const [summary, setSummary] = useState<InventorySummary | null>(null);
@@ -66,8 +96,82 @@ export default function InventoryPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  
+  // New states for procurement and alerts
+  const [activeTab, setActiveTab] = useState<'inventory' | 'alerts' | 'procurement'>('inventory');
+  const [alerts, setAlerts] = useState<InventoryAlert[]>([]);
+  const [procurementList, setProcurementList] = useState<ProcurementItem[]>([]);
+  const [showProcurementModal, setShowProcurementModal] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [procurementQuantity, setProcurementQuantity] = useState<number>(0);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
 
   const canManageInventory = hasPermission('can_manage_inventory');
+  const canApproveProcurement = hasPermission('can_approve_procurement') || hasPermission('can_manage_inventory');
+
+  // SSE Connection for real-time inventory alerts
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const connectSSE = () => {
+      eventSource = new EventSource('http://localhost:8000/stream/alerts');
+
+      eventSource.addEventListener('connected', () => {
+        setIsLiveConnected(true);
+        console.log('Connected to inventory alerts stream');
+      });
+
+      eventSource.addEventListener('alert', (event) => {
+        try {
+          const alert = JSON.parse(event.data);
+          // Only process inventory-related alerts
+          if (alert.category === 'inventory' || ['out_of_stock', 'low_stock', 'overstocked', 'reorder'].includes(alert.type)) {
+            const newAlert: InventoryAlert = {
+              id: alert.id,
+              item_name: alert.item_name || alert.title,
+              store_name: alert.store_name || 'Unknown Store',
+              type: alert.type,
+              message: alert.message,
+              severity: alert.severity,
+              timestamp: alert.timestamp || new Date().toISOString(),
+              acknowledged: false,
+            };
+            
+            setAlerts(prev => {
+              const exists = prev.some(a => a.id === newAlert.id);
+              if (exists) return prev;
+              return [newAlert, ...prev].slice(0, 50);
+            });
+
+            // Update stock summary based on alert type
+            if (alert.type === 'out_of_stock') {
+              setSummary(prev => prev ? {...prev, out_of_stock_count: (prev.out_of_stock_count || 0) + 1} : prev);
+            } else if (alert.type === 'low_stock') {
+              setSummary(prev => prev ? {...prev, low_stock_count: (prev.low_stock_count || 0) + 1} : prev);
+            } else if (alert.type === 'overstocked') {
+              setSummary(prev => prev ? {...prev, overstocked_count: (prev.overstocked_count || 0) + 1} : prev);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse inventory alert:', e);
+        }
+      });
+
+      eventSource.onerror = () => {
+        setIsLiveConnected(false);
+        eventSource?.close();
+        reconnectTimeout = setTimeout(connectSSE, 5000);
+      };
+    };
+
+    connectSSE();
+
+    return () => {
+      eventSource?.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, []);
 
   // Generate mock data for demonstration when API returns empty
   const generateMockInventory = (): InventoryItem[] => {
@@ -147,6 +251,83 @@ export default function InventoryPage() {
     { category: 'Household', item_count: 95, total_quantity: 11200, total_value: 336000, low_stock_count: 5 },
   ];
 
+  // Generate alerts based on inventory items
+  const generateAlerts = (inventoryItems: InventoryItem[]): InventoryAlert[] => {
+    const alerts: InventoryAlert[] = [];
+    let alertId = 1;
+
+    inventoryItems.forEach(item => {
+      if (item.status === 'out_of_stock') {
+        alerts.push({
+          id: alertId++,
+          item_name: item.item_name,
+          store_name: item.store_name,
+          type: 'out_of_stock',
+          message: `${item.item_name} is out of stock at ${item.store_name}. Immediate reorder required!`,
+          severity: 'critical',
+          timestamp: new Date(Date.now() - Math.random() * 3600000).toISOString(),
+          acknowledged: false,
+        });
+      } else if (item.status === 'low_stock') {
+        alerts.push({
+          id: alertId++,
+          item_name: item.item_name,
+          store_name: item.store_name,
+          type: 'low_stock',
+          message: `${item.item_name} is running low at ${item.store_name}. Current stock: ${item.quantity} (Reorder level: ${item.reorder_level})`,
+          severity: 'warning',
+          timestamp: new Date(Date.now() - Math.random() * 7200000).toISOString(),
+          acknowledged: false,
+        });
+      } else if (item.status === 'overstocked') {
+        alerts.push({
+          id: alertId++,
+          item_name: item.item_name,
+          store_name: item.store_name,
+          type: 'overstocked',
+          message: `${item.item_name} is overstocked at ${item.store_name}. Current: ${item.quantity} (Max: ${item.max_stock_level})`,
+          severity: 'info',
+          timestamp: new Date(Date.now() - Math.random() * 14400000).toISOString(),
+          acknowledged: false,
+        });
+      }
+    });
+
+    return alerts.sort((a, b) => {
+      const severityOrder = { critical: 0, warning: 1, info: 2 };
+      return severityOrder[a.severity] - severityOrder[b.severity];
+    }).slice(0, 50);
+  };
+
+  // Generate procurement suggestions
+  const generateProcurementList = (inventoryItems: InventoryItem[]): ProcurementItem[] => {
+    const procurement: ProcurementItem[] = [];
+    let procId = 1;
+
+    inventoryItems
+      .filter(item => item.status === 'out_of_stock' || item.status === 'low_stock')
+      .forEach(item => {
+        const suggestedQty = item.status === 'out_of_stock' 
+          ? item.max_stock_level 
+          : item.reorder_level * 2 - item.quantity;
+        
+        procurement.push({
+          id: procId++,
+          item,
+          suggestedQuantity: Math.max(suggestedQty, item.reorder_level),
+          status: 'pending',
+          priority: item.status === 'out_of_stock' ? 'critical' : 
+                   item.quantity < item.reorder_level / 2 ? 'high' : 'medium',
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+    return procurement.sort((a, b) => {
+      const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      return priorityOrder[a.priority] - priorityOrder[b.priority];
+    });
+  };
+
   useEffect(() => {
     fetchData();
   }, [selectedStore, selectedCategory, selectedStatus]);
@@ -161,9 +342,11 @@ export default function InventoryPage() {
 
       const [summaryRes, itemsRes, categoriesRes] = await Promise.all([
         authFetch(`/api/inventory/summary?${params}`),
-        authFetch(`/api/inventory/items?${params}&limit=50`),
+        authFetch(`/api/inventory/items?${params}&limit=200`),
         authFetch(`/api/inventory/categories?${params}`),
       ]);
+
+      let inventoryItems: InventoryItem[] = [];
 
       if (summaryRes.ok) {
         const summaryData = await summaryRes.json();
@@ -179,12 +362,15 @@ export default function InventoryPage() {
       if (itemsRes.ok) {
         const data = await itemsRes.json();
         if (data.items && data.items.length > 0) {
+          inventoryItems = data.items;
           setItems(data.items);
         } else {
-          setItems(generateMockInventory().slice(0, 50));
+          inventoryItems = generateMockInventory();
+          setItems(inventoryItems.slice(0, 100));
         }
       } else {
-        setItems(generateMockInventory().slice(0, 50));
+        inventoryItems = generateMockInventory();
+        setItems(inventoryItems.slice(0, 100));
       }
       
       if (categoriesRes.ok) {
@@ -197,12 +383,19 @@ export default function InventoryPage() {
       } else {
         setCategories(generateMockCategories());
       }
+
+      // Generate alerts and procurement list from inventory data
+      setAlerts(generateAlerts(inventoryItems));
+      setProcurementList(generateProcurementList(inventoryItems));
+
     } catch (error) {
       console.error('Failed to fetch inventory data:', error);
-      // Fallback to mock data on error
+      const mockItems = generateMockInventory();
       setSummary(generateMockSummary());
-      setItems(generateMockInventory().slice(0, 50));
+      setItems(mockItems.slice(0, 100));
       setCategories(generateMockCategories());
+      setAlerts(generateAlerts(mockItems));
+      setProcurementList(generateProcurementList(mockItems));
     } finally {
       setLoading(false);
     }
@@ -221,231 +414,291 @@ export default function InventoryPage() {
     return new Intl.NumberFormat('en-AE').format(value);
   };
 
-  const filteredItems = items.filter(item =>
+  const formatTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    return date.toLocaleDateString();
+  };
+
+  const filteredItems = useMemo(() => items.filter(item =>
     item.item_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     item.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
     item.store_name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ), [items, searchQuery]);
+
+  const acknowledgeAlert = (alertId: number) => {
+    setAlerts(prev => prev.map(alert => 
+      alert.id === alertId ? { ...alert, acknowledged: true } : alert
+    ));
+  };
+
+  const handleProcurementAction = (procId: number, action: 'approved' | 'rejected') => {
+    setProcurementList(prev => prev.map(item =>
+      item.id === procId ? { ...item, status: action } : item
+    ));
+  };
+
+  const addToProcurement = (item: InventoryItem) => {
+    setSelectedItem(item);
+    setProcurementQuantity(Math.max(item.reorder_level * 2 - item.quantity, item.reorder_level));
+    setShowProcurementModal(true);
+  };
+
+  const confirmAddToProcurement = () => {
+    if (!selectedItem) return;
+    
+    const newProcItem: ProcurementItem = {
+      id: Date.now(),
+      item: selectedItem,
+      suggestedQuantity: procurementQuantity,
+      status: 'pending',
+      priority: selectedItem.status === 'out_of_stock' ? 'critical' : 'high',
+      createdAt: new Date().toISOString(),
+    };
+    
+    setProcurementList(prev => [newProcItem, ...prev]);
+    setShowProcurementModal(false);
+    setSelectedItem(null);
+  };
 
   const accessibleStores = user?.permissions?.accessible_stores || [];
+  const unacknowledgedAlerts = alerts.filter(a => !a.acknowledged).length;
+  const pendingProcurement = procurementList.filter(p => p.status === 'pending').length;
+
+  // Stock Status Summary
+  const stockSummary = useMemo(() => {
+    const inStock = items.filter(i => i.status === 'in_stock').length;
+    const lowStock = items.filter(i => i.status === 'low_stock').length;
+    const outOfStock = items.filter(i => i.status === 'out_of_stock').length;
+    const overStock = items.filter(i => i.status === 'overstocked').length;
+    return { inStock, lowStock, outOfStock, overStock };
+  }, [items]);
 
   return (
     <main className="min-h-screen p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* Page Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
-            <Package className="w-8 h-8 text-red-600" />
-            Inventory Management
-          </h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">
-            Monitor stock levels, manage transfers, and track inventory across all stores
+          <div className="flex items-center justify-between">
+            <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+              <Package className="w-8 h-8 text-cyan-500" />
+              Inventory & Procurement
+            </h1>
+            {/* Live Indicator */}
+            {isLiveConnected && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="text-sm font-medium text-green-400">LIVE</span>
+              </div>
+            )}
+          </div>
+          <p className="mt-2 text-slate-400">
+            Monitor stock levels, manage alerts, and handle procurement across all stores
           </p>
         </div>
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border border-gray-100 dark:border-gray-700">
+        {/* Tab Navigation */}
+        <div className="flex gap-2 mb-6 border-b border-slate-700">
+          <button
+            onClick={() => setActiveTab('inventory')}
+            className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === 'inventory'
+                ? 'text-cyan-400 border-cyan-400'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <Package className="w-5 h-5" />
+            Inventory
+          </button>
+          <button
+            onClick={() => setActiveTab('alerts')}
+            className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === 'alerts'
+                ? 'text-cyan-400 border-cyan-400'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <Bell className="w-5 h-5" />
+            Alerts
+            {unacknowledgedAlerts > 0 && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-red-500 text-white">
+                {unacknowledgedAlerts}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('procurement')}
+            className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === 'procurement'
+                ? 'text-cyan-400 border-cyan-400'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <ShoppingCart className="w-5 h-5" />
+            Procurement
+            {pendingProcurement > 0 && (
+              <span className="px-2 py-0.5 text-xs rounded-full bg-amber-500 text-black">
+                {pendingProcurement}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Summary Cards - Always visible */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
+          <div className="glass rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Total Items</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                <p className="text-sm text-slate-400">Total Items</p>
+                <p className="text-2xl font-bold text-white">
                   {formatNumber(summary?.total_items || 0)}
                 </p>
               </div>
-              <Package className="w-10 h-10 text-gray-400" />
+              <Package className="w-10 h-10 text-slate-500" />
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border border-gray-100 dark:border-gray-700">
+          <div className="glass rounded-xl p-4 border-green-500/30">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Total Value</p>
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {formatCurrency(summary?.total_value || 0)}
+                <p className="text-sm text-green-400">In Stock</p>
+                <p className="text-2xl font-bold text-green-400">
+                  {stockSummary.inStock}
                 </p>
               </div>
-              <Box className="w-10 h-10 text-green-500" />
+              <CheckCircle className="w-10 h-10 text-green-500" />
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border border-yellow-200 dark:border-yellow-800">
+          <div className="glass rounded-xl p-4 border-yellow-500/30">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-yellow-600 dark:text-yellow-400">Low Stock</p>
-                <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
-                  {summary?.low_stock_count || 0}
+                <p className="text-sm text-yellow-400">Low Stock</p>
+                <p className="text-2xl font-bold text-yellow-400">
+                  {summary?.low_stock_count || stockSummary.lowStock}
                 </p>
               </div>
               <TrendingDown className="w-10 h-10 text-yellow-500" />
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border border-red-200 dark:border-red-800">
+          <div className="glass rounded-xl p-4 border-red-500/30">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-red-600 dark:text-red-400">Out of Stock</p>
-                <p className="text-2xl font-bold text-red-600 dark:text-red-400">
-                  {summary?.out_of_stock_count || 0}
+                <p className="text-sm text-red-400">Out of Stock</p>
+                <p className="text-2xl font-bold text-red-400">
+                  {summary?.out_of_stock_count || stockSummary.outOfStock}
                 </p>
               </div>
               <AlertTriangle className="w-10 h-10 text-red-500" />
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border border-blue-200 dark:border-blue-800">
+          <div className="glass rounded-xl p-4 border-blue-500/30">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-blue-600 dark:text-blue-400">Overstocked</p>
-                <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                  {summary?.overstocked_count || 0}
+                <p className="text-sm text-blue-400">Overstocked</p>
+                <p className="text-2xl font-bold text-blue-400">
+                  {summary?.overstocked_count || stockSummary.overStock}
                 </p>
               </div>
               <TrendingUp className="w-10 h-10 text-blue-500" />
             </div>
           </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border border-purple-200 dark:border-purple-800">
+          <div className="glass rounded-xl p-4 border-purple-500/30">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-purple-600 dark:text-purple-400">Pending Transfers</p>
-                <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                  {summary?.pending_transfers || 0}
+                <p className="text-sm text-purple-400">Pending Orders</p>
+                <p className="text-2xl font-bold text-purple-400">
+                  {pendingProcurement}
                 </p>
               </div>
-              <ArrowRightLeft className="w-10 h-10 text-purple-500" />
+              <Truck className="w-10 h-10 text-purple-500" />
             </div>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 mb-6 border border-gray-100 dark:border-gray-700">
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Search */}
-            <div className="flex-1 min-w-[200px]">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search items, categories, stores..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-            </div>
-
-            {/* Store Filter */}
-            <select
-              value={selectedStore || ''}
-              onChange={(e) => setSelectedStore(e.target.value ? parseInt(e.target.value) : null)}
-              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white"
-            >
-              <option value="">All Stores</option>
-              {accessibleStores.map((storeId: number) => (
-                <option key={storeId} value={storeId}>Store {storeId}</option>
-              ))}
-            </select>
-
-            {/* Category Filter */}
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white"
-            >
-              <option value="">All Categories</option>
-              {categories.map((cat) => (
-                <option key={cat.category} value={cat.category}>{cat.category}</option>
-              ))}
-            </select>
-
-            {/* Status Filter */}
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white"
-            >
-              <option value="">All Status</option>
-              <option value="in_stock">In Stock</option>
-              <option value="low_stock">Low Stock</option>
-              <option value="out_of_stock">Out of Stock</option>
-              <option value="overstocked">Overstocked</option>
-            </select>
-
-            {/* Refresh Button */}
-            <button
-              onClick={fetchData}
-              className="p-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
-            >
-              <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Category Breakdown */}
-          <div className="lg:col-span-1">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-              <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                  <Filter className="w-5 h-5" />
-                  Categories
-                </h2>
-              </div>
-              <div className="divide-y divide-gray-100 dark:divide-gray-700">
-                {categories.map((cat) => (
-                  <div key={cat.category} className="p-4">
-                    <button
-                      onClick={() => setExpandedCategory(expandedCategory === cat.category ? null : cat.category)}
-                      className="w-full flex items-center justify-between"
-                    >
-                      <div className="text-left">
-                        <p className="font-medium text-gray-900 dark:text-white">{cat.category}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {cat.item_count} items · {formatCurrency(cat.total_value)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {cat.low_stock_count > 0 && (
-                          <span className="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
-                            {cat.low_stock_count} low
-                          </span>
-                        )}
-                        {expandedCategory === cat.category ? (
-                          <ChevronUp className="w-5 h-5 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-gray-400" />
-                        )}
-                      </div>
-                    </button>
-                    {expandedCategory === cat.category && (
-                      <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
-                        <div className="grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <p className="text-gray-500 dark:text-gray-400">Total Qty</p>
-                            <p className="font-medium text-gray-900 dark:text-white">{formatNumber(cat.total_quantity)}</p>
-                          </div>
-                          <div>
-                            <p className="text-gray-500 dark:text-gray-400">Value</p>
-                            <p className="font-medium text-gray-900 dark:text-white">{formatCurrency(cat.total_value)}</p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+        {/* INVENTORY TAB */}
+        {activeTab === 'inventory' && (
+          <>
+            {/* Filters */}
+            <div className="glass rounded-xl p-4 mb-6">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex-1 min-w-[200px]">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search items, categories, stores..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-600 bg-slate-800 text-white focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                    />
                   </div>
-                ))}
+                </div>
+
+                <select
+                  value={selectedStore || ''}
+                  onChange={(e) => setSelectedStore(e.target.value ? parseInt(e.target.value) : null)}
+                  className="px-4 py-2 rounded-lg border border-slate-600 bg-slate-800 text-white"
+                >
+                  <option value="">All Stores</option>
+                  <option value="1">Al Barsha</option>
+                  <option value="2">Deira City Centre</option>
+                  <option value="3">Karama</option>
+                  <option value="4">Mushrif Mall</option>
+                  <option value="5">Al Wahda</option>
+                </select>
+
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="px-4 py-2 rounded-lg border border-slate-600 bg-slate-800 text-white"
+                >
+                  <option value="">All Categories</option>
+                  {categories.map((cat) => (
+                    <option key={cat.category} value={cat.category}>{cat.category}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatus(e.target.value)}
+                  className="px-4 py-2 rounded-lg border border-slate-600 bg-slate-800 text-white"
+                >
+                  <option value="">All Status</option>
+                  <option value="in_stock">In Stock</option>
+                  <option value="low_stock">Low Stock</option>
+                  <option value="out_of_stock">Out of Stock</option>
+                  <option value="overstocked">Overstocked</option>
+                </select>
+
+                <button
+                  onClick={fetchData}
+                  className="p-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700 transition-colors"
+                >
+                  <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
+                </button>
               </div>
             </div>
-          </div>
 
-          {/* Inventory Table */}
-          <div className="lg:col-span-2">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700">
-              <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                  <Package className="w-5 h-5" />
+            {/* Inventory Table */}
+            <div className="glass rounded-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <Package className="w-5 h-5 text-cyan-400" />
                   Inventory Items
-                  <span className="ml-2 px-2 py-1 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                  <span className="ml-2 px-2 py-1 text-xs rounded-full bg-slate-700 text-slate-300">
                     {filteredItems.length} items
                   </span>
                 </h2>
@@ -453,55 +706,56 @@ export default function InventoryPage() {
               
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gray-50 dark:bg-gray-700/50">
+                  <thead className="bg-slate-800/50">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Item</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Store</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Qty</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Reorder</th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Unit Cost</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase">Item</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase">Store</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase">Qty</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase">Reorder Level</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-slate-400 uppercase">Status</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase">Unit Cost</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-slate-400 uppercase">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <tbody className="divide-y divide-slate-700">
                     {loading ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                           <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
                           Loading inventory...
                         </td>
                       </tr>
                     ) : filteredItems.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                           No items found
                         </td>
                       </tr>
                     ) : (
-                      filteredItems.map((item) => (
-                        <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                      filteredItems.slice(0, 50).map((item) => (
+                        <tr key={item.id} className="hover:bg-slate-700/30 transition-colors">
                           <td className="px-4 py-3">
                             <div>
-                              <p className="font-medium text-gray-900 dark:text-white">{item.item_name}</p>
-                              <p className="text-sm text-gray-500 dark:text-gray-400">{item.category}</p>
+                              <p className="font-medium text-white">{item.item_name}</p>
+                              <p className="text-sm text-slate-400">{item.category}</p>
                             </div>
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <Building2 className="w-4 h-4 text-gray-400" />
-                              <span className="text-sm text-gray-600 dark:text-gray-300">{item.store_name}</span>
+                              <Building2 className="w-4 h-4 text-slate-400" />
+                              <span className="text-sm text-slate-300">{item.store_name}</span>
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right">
                             <span className={`font-medium ${
-                              item.quantity <= 0 ? 'text-red-600' : 
-                              item.quantity <= item.reorder_level ? 'text-yellow-600' : 
-                              'text-gray-900 dark:text-white'
+                              item.quantity <= 0 ? 'text-red-400' : 
+                              item.quantity <= item.reorder_level ? 'text-yellow-400' : 
+                              'text-white'
                             }`}>
                               {formatNumber(item.quantity)}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right text-gray-500 dark:text-gray-400">
+                          <td className="px-4 py-3 text-right text-slate-400">
                             {formatNumber(item.reorder_level)}
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -509,8 +763,18 @@ export default function InventoryPage() {
                               {statusLabels[item.status]}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right text-gray-900 dark:text-white">
+                          <td className="px-4 py-3 text-right text-white">
                             {formatCurrency(item.unit_cost)}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {(item.status === 'out_of_stock' || item.status === 'low_stock') && canManageInventory && (
+                              <button
+                                onClick={() => addToProcurement(item)}
+                                className="px-3 py-1 text-xs rounded-lg bg-cyan-600 text-white hover:bg-cyan-700 transition-colors"
+                              >
+                                Order
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))
@@ -519,8 +783,280 @@ export default function InventoryPage() {
                 </table>
               </div>
             </div>
+          </>
+        )}
+
+        {/* ALERTS TAB */}
+        {activeTab === 'alerts' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Bell className="w-6 h-6 text-cyan-400" />
+                Inventory Alerts
+                <span className="px-2 py-1 text-xs rounded-full bg-red-500/20 text-red-400">
+                  {unacknowledgedAlerts} unread
+                </span>
+              </h2>
+              <button
+                onClick={() => setAlerts(prev => prev.map(a => ({ ...a, acknowledged: true })))}
+                className="px-4 py-2 text-sm rounded-lg bg-slate-700 text-white hover:bg-slate-600 transition-colors"
+              >
+                Mark All Read
+              </button>
+            </div>
+
+            {alerts.length === 0 ? (
+              <div className="glass rounded-xl p-12 text-center">
+                <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+                <p className="text-xl text-white mb-2">All Clear!</p>
+                <p className="text-slate-400">No inventory alerts at this time</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {alerts.map((alert) => (
+                  <div
+                    key={alert.id}
+                    className={`glass rounded-xl p-4 border-l-4 ${
+                      alert.severity === 'critical' ? 'border-red-500' :
+                      alert.severity === 'warning' ? 'border-yellow-500' : 'border-blue-500'
+                    } ${alert.acknowledged ? 'opacity-60' : ''}`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3">
+                        <div className={`p-2 rounded-lg ${
+                          alert.severity === 'critical' ? 'bg-red-500/20' :
+                          alert.severity === 'warning' ? 'bg-yellow-500/20' : 'bg-blue-500/20'
+                        }`}>
+                          {alert.severity === 'critical' ? <AlertTriangle className="w-5 h-5 text-red-400" /> :
+                           alert.severity === 'warning' ? <AlertCircle className="w-5 h-5 text-yellow-400" /> :
+                           <TrendingUp className="w-5 h-5 text-blue-400" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-sm font-semibold ${
+                              alert.severity === 'critical' ? 'text-red-400' :
+                              alert.severity === 'warning' ? 'text-yellow-400' : 'text-blue-400'
+                            }`}>
+                              {alert.type.replace('_', ' ').toUpperCase()}
+                            </span>
+                            <span className="text-xs text-slate-500">{formatTime(alert.timestamp)}</span>
+                            {!alert.acknowledged && (
+                              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                            )}
+                          </div>
+                          <p className="text-white font-medium mt-1">{alert.item_name}</p>
+                          <p className="text-sm text-slate-400 mt-1">{alert.message}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <Building2 className="w-4 h-4 text-slate-500" />
+                            <span className="text-xs text-slate-500">{alert.store_name}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!alert.acknowledged && (
+                          <>
+                            <button
+                              onClick={() => acknowledgeAlert(alert.id)}
+                              className="p-2 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+                              title="Acknowledge"
+                            >
+                              <Check className="w-4 h-4" />
+                            </button>
+                            {canManageInventory && alert.type !== 'overstocked' && (
+                              <button
+                                onClick={() => {
+                                  const item = items.find(i => i.item_name === alert.item_name && i.store_name === alert.store_name);
+                                  if (item) addToProcurement(item);
+                                }}
+                                className="px-3 py-2 rounded-lg bg-cyan-600 text-white text-sm hover:bg-cyan-700 transition-colors"
+                              >
+                                Create Order
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        )}
+
+        {/* PROCUREMENT TAB */}
+        {activeTab === 'procurement' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                <ShoppingCart className="w-6 h-6 text-cyan-400" />
+                Procurement Orders
+              </h2>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 text-sm rounded-full bg-amber-500/20 text-amber-400">
+                  {pendingProcurement} Pending
+                </span>
+                <span className="px-3 py-1 text-sm rounded-full bg-green-500/20 text-green-400">
+                  {procurementList.filter(p => p.status === 'approved').length} Approved
+                </span>
+              </div>
+            </div>
+
+            {procurementList.length === 0 ? (
+              <div className="glass rounded-xl p-12 text-center">
+                <Package className="w-16 h-16 text-slate-500 mx-auto mb-4" />
+                <p className="text-xl text-white mb-2">No Procurement Orders</p>
+                <p className="text-slate-400">All inventory levels are adequate</p>
+              </div>
+            ) : (
+              <div className="glass rounded-xl overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-slate-800/50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase">Priority</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase">Item</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-400 uppercase">Store</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase">Current Stock</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase">Order Qty</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-400 uppercase">Est. Cost</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-slate-400 uppercase">Status</th>
+                      {canApproveProcurement && (
+                        <th className="px-4 py-3 text-center text-xs font-medium text-slate-400 uppercase">Actions</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-700">
+                    {procurementList.map((proc) => (
+                      <tr key={proc.id} className="hover:bg-slate-700/30 transition-colors">
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 text-xs rounded-full ${priorityColors[proc.priority]}`}>
+                            {proc.priority.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div>
+                            <p className="font-medium text-white">{proc.item.item_name}</p>
+                            <p className="text-sm text-slate-400">{proc.item.category}</p>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">{proc.item.store_name}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={proc.item.quantity <= 0 ? 'text-red-400' : 'text-yellow-400'}>
+                            {proc.item.quantity}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right text-white font-medium">
+                          {formatNumber(proc.suggestedQuantity)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-white">
+                          {formatCurrency(proc.suggestedQuantity * proc.item.unit_cost)}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2 py-1 text-xs rounded-full ${
+                            proc.status === 'pending' ? 'bg-amber-500/20 text-amber-400' :
+                            proc.status === 'approved' ? 'bg-green-500/20 text-green-400' :
+                            proc.status === 'rejected' ? 'bg-red-500/20 text-red-400' :
+                            'bg-blue-500/20 text-blue-400'
+                          }`}>
+                            {proc.status.charAt(0).toUpperCase() + proc.status.slice(1)}
+                          </span>
+                        </td>
+                        {canApproveProcurement && (
+                          <td className="px-4 py-3 text-center">
+                            {proc.status === 'pending' && (
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => handleProcurementAction(proc.id, 'approved')}
+                                  className="p-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                                  title="Approve Order"
+                                >
+                                  <Check className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleProcurementAction(proc.id, 'rejected')}
+                                  className="p-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+                                  title="Reject Order"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Procurement Modal */}
+        {showProcurementModal && selectedItem && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="glass rounded-2xl p-6 w-full max-w-md mx-4">
+              <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <ShoppingCart className="w-6 h-6 text-cyan-400" />
+                Create Procurement Order
+              </h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Item</label>
+                  <p className="text-white font-medium">{selectedItem.item_name}</p>
+                  <p className="text-sm text-slate-400">{selectedItem.category} • {selectedItem.store_name}</p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Current Stock</label>
+                    <p className={`text-lg font-bold ${selectedItem.quantity <= 0 ? 'text-red-400' : 'text-yellow-400'}`}>
+                      {selectedItem.quantity}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-slate-400 mb-1">Reorder Level</label>
+                    <p className="text-lg font-bold text-white">{selectedItem.reorder_level}</p>
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Order Quantity</label>
+                  <input
+                    type="number"
+                    value={procurementQuantity}
+                    onChange={(e) => setProcurementQuantity(parseInt(e.target.value) || 0)}
+                    min={1}
+                    className="w-full px-4 py-2 rounded-lg border border-slate-600 bg-slate-800 text-white focus:ring-2 focus:ring-cyan-500"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm text-slate-400 mb-1">Estimated Cost</label>
+                  <p className="text-xl font-bold text-cyan-400">
+                    {formatCurrency(procurementQuantity * selectedItem.unit_cost)}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowProcurementModal(false)}
+                  className="flex-1 px-4 py-2 rounded-lg bg-slate-700 text-white hover:bg-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmAddToProcurement}
+                  className="flex-1 px-4 py-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-700 transition-colors"
+                >
+                  Create Order
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

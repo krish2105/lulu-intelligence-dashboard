@@ -10,6 +10,8 @@ pubsub: Optional[redis.client.PubSub] = None
 
 CHANNEL_SALES_STREAM = "sales:stream"
 CHANNEL_PREDICTIONS = "predictions:update"
+CHANNEL_ALERTS_STREAM = "alerts:stream"
+CHANNEL_INVENTORY_STREAM = "inventory:stream"
 
 
 async def init_redis():
@@ -40,6 +42,24 @@ async def publish_sale(sale_data: dict):
         await redis_client.publish(
             CHANNEL_SALES_STREAM,
             json.dumps(sale_data, default=str)
+        )
+
+
+async def publish_alert(alert_data: dict):
+    """Publish new alert to Redis channel"""
+    if redis_client:
+        await redis_client.publish(
+            CHANNEL_ALERTS_STREAM,
+            json.dumps(alert_data, default=str)
+        )
+
+
+async def publish_inventory_update(inventory_data: dict):
+    """Publish inventory update to Redis channel"""
+    if redis_client:
+        await redis_client.publish(
+            CHANNEL_INVENTORY_STREAM,
+            json.dumps(inventory_data, default=str)
         )
 
 

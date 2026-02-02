@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import KPICards from '@/components/KPICards';
 import LiveTable from '@/components/LiveTable';
@@ -13,10 +14,40 @@ import {
   ReturnsLiveFeed
 } from '@/components/charts';
 import { ROLE_DISPLAY_NAMES, UserRole } from '@/types/auth';
-import { Store, TrendingUp, Package, Users, Calendar, MapPin } from 'lucide-react';
+import { Store, TrendingUp, Package, Users, Calendar, MapPin, AlertTriangle, Bell, ShoppingCart } from 'lucide-react';
+import Link from 'next/link';
 
 export default function Home() {
-  const { user, hasRole, hasPermission } = useAuth();
+  const { user, hasRole, hasPermission, authFetch } = useAuth();
+  
+  // Alert stats state
+  const [alertStats, setAlertStats] = useState({
+    outOfStock: 12,
+    lowStock: 45,
+    pendingOrders: 8,
+    criticalAlerts: 5,
+  });
+
+  // Fetch alert stats
+  useEffect(() => {
+    const fetchAlertStats = async () => {
+      try {
+        const response = await authFetch('/api/inventory/summary');
+        if (response.ok) {
+          const data = await response.json();
+          setAlertStats({
+            outOfStock: data.out_of_stock_count || 12,
+            lowStock: data.low_stock_count || 45,
+            pendingOrders: data.pending_transfers || 8,
+            criticalAlerts: data.out_of_stock_count || 5,
+          });
+        }
+      } catch (error) {
+        console.log('Using default alert stats');
+      }
+    };
+    fetchAlertStats();
+  }, [authFetch]);
 
   // Role-based welcome message
   const getWelcomeMessage = () => {
@@ -142,6 +173,65 @@ export default function Home() {
       </header>
 
       <div className="max-w-7xl mx-auto space-y-8">
+        {/* Alert KPI Section - Left side prominence */}
+        <section className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          {/* Critical Alerts Card */}
+          <Link href="/inventory?tab=alerts" className="glass rounded-xl p-4 border border-red-500/30 hover:border-red-500/60 transition-all group cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-red-400 uppercase tracking-wider font-medium">Critical Alerts</p>
+                <p className="text-3xl font-bold text-red-400 mt-1">{alertStats.criticalAlerts}</p>
+                <p className="text-xs text-slate-400 mt-1">Require immediate action</p>
+              </div>
+              <div className="p-3 rounded-xl bg-red-500/20 group-hover:bg-red-500/30 transition-colors">
+                <AlertTriangle className="w-8 h-8 text-red-400" />
+              </div>
+            </div>
+          </Link>
+
+          {/* Out of Stock Card */}
+          <Link href="/inventory?status=out_of_stock" className="glass rounded-xl p-4 border border-orange-500/30 hover:border-orange-500/60 transition-all group cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-orange-400 uppercase tracking-wider font-medium">Out of Stock</p>
+                <p className="text-3xl font-bold text-orange-400 mt-1">{alertStats.outOfStock}</p>
+                <p className="text-xs text-slate-400 mt-1">Items need restock</p>
+              </div>
+              <div className="p-3 rounded-xl bg-orange-500/20 group-hover:bg-orange-500/30 transition-colors">
+                <Package className="w-8 h-8 text-orange-400" />
+              </div>
+            </div>
+          </Link>
+
+          {/* Low Stock Card */}
+          <Link href="/inventory?status=low_stock" className="glass rounded-xl p-4 border border-yellow-500/30 hover:border-yellow-500/60 transition-all group cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-yellow-400 uppercase tracking-wider font-medium">Low Stock</p>
+                <p className="text-3xl font-bold text-yellow-400 mt-1">{alertStats.lowStock}</p>
+                <p className="text-xs text-slate-400 mt-1">Below reorder level</p>
+              </div>
+              <div className="p-3 rounded-xl bg-yellow-500/20 group-hover:bg-yellow-500/30 transition-colors">
+                <Bell className="w-8 h-8 text-yellow-400" />
+              </div>
+            </div>
+          </Link>
+
+          {/* Pending Orders Card */}
+          <Link href="/inventory?tab=procurement" className="glass rounded-xl p-4 border border-purple-500/30 hover:border-purple-500/60 transition-all group cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-purple-400 uppercase tracking-wider font-medium">Pending Orders</p>
+                <p className="text-3xl font-bold text-purple-400 mt-1">{alertStats.pendingOrders}</p>
+                <p className="text-xs text-slate-400 mt-1">Awaiting approval</p>
+              </div>
+              <div className="p-3 rounded-xl bg-purple-500/20 group-hover:bg-purple-500/30 transition-colors">
+                <ShoppingCart className="w-8 h-8 text-purple-400" />
+              </div>
+            </div>
+          </Link>
+        </section>
+
         {/* KPI Cards - Auto-refresh every 30 seconds */}
         <section>
           <KPICards refreshInterval={30000} />
