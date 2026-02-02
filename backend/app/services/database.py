@@ -1,10 +1,14 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
+from sqlalchemy import text
 from typing import AsyncGenerator
+import asyncio
+import logging
 from app.config import get_settings
 from app.models.sales import Base
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Optimized connection pooling for production
 engine = create_async_engine(
@@ -27,11 +31,25 @@ async_session = async_sessionmaker(
 )
 
 
-async def init_db():
-    """Initialize database connection"""
-    async with engine.begin() as conn:
-        # Tables are created via init.sql, but this ensures connection works
-        pass
+async def init_db(max_retries: int = 10, retry_delay: float = 2.0):
+    """Initialize database connection with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            async with engine.begin() as conn:
+                # Test the connection
+                await conn.execute(text("SELECT 1"))
+                logger.info("Database connection established successfully")
+                return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(
+                    f"Database connection attempt {attempt + 1}/{max_retries} failed: {e}. "
+                    f"Retrying in {retry_delay}s..."
+                )
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(f"Failed to connect to database after {max_retries} attempts")
+                raise
 
 
 async def close_db():
