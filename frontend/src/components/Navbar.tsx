@@ -27,7 +27,8 @@ import {
   CheckCircle,
   ChevronRight,
   Sun,
-  Moon
+  Moon,
+  Users
 } from 'lucide-react';
 import { ROLE_DISPLAY_NAMES, UserRole } from '@/types/auth';
 import { ReactNode } from 'react';
@@ -72,6 +73,12 @@ const navItems: NavItem[] = [
     label: 'Analytics', 
     href: '/analytics', 
     icon: <BarChart3 className="w-5 h-5" /> 
+  },
+  { 
+    label: 'Employees', 
+    href: '/employees', 
+    icon: <Users className="w-5 h-5" />,
+    permission: 'can_manage_inventory'
   },
   { 
     label: 'Reports', 

@@ -10,9 +10,10 @@ from app.services.database import init_db, close_db
 from app.services.redis_client import init_redis, close_redis
 from app.services.data_generator import DataGenerator
 from app.services.metrics import get_metrics
+from app.services.employee_seeder import initialize_employee_system
 from app.routes import sales, streaming, history, kpis, stream, analytics, auth
 from app.routes import ai as ai_routes
-from app.routes import inventory, promotions, alerts, admin, reports, monitoring
+from app.routes import inventory, promotions, alerts, admin, reports, monitoring, employees
 from app.middleware import RequestIDMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 
@@ -30,6 +31,13 @@ async def lifespan(app: FastAPI):
     
     await init_redis()
     logger.info("Redis initialized")
+    
+    # Initialize employee system (migration + seeding)
+    try:
+        await initialize_employee_system()
+        logger.info("Employee system initialized")
+    except Exception as e:
+        logger.warning(f"Employee system initialization skipped: {e}")
     
     # Start the data generator background task
     generator = DataGenerator()
@@ -102,6 +110,7 @@ app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts & Notifica
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
+app.include_router(employees.router, prefix="/api/employees", tags=["Employees"])
 
 # Also mount /api/latest from stream router
 @app.get("/api/latest", tags=["Stream"])
