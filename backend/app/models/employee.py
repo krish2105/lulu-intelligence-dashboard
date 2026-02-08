@@ -116,7 +116,7 @@ class Employee(Base):
     store = relationship("Store", foreign_keys=[store_id])
     manager = relationship("Employee", remote_side=[id], foreign_keys=[reports_to_id])
     subordinates = relationship("Employee", back_populates="manager", foreign_keys=[reports_to_id])
-    performance_records = relationship("EmployeePerformance", back_populates="employee", cascade="all, delete-orphan")
+    performance_records = relationship("EmployeePerformance", back_populates="employee", foreign_keys="EmployeePerformance.employee_id", cascade="all, delete-orphan")
     transactions = relationship("EmployeeTransaction", back_populates="employee", foreign_keys="EmployeeTransaction.employee_id")
     attendance_records = relationship("EmployeeAttendance", back_populates="employee", cascade="all, delete-orphan")
     certifications = relationship("EmployeeCertification", back_populates="employee", cascade="all, delete-orphan")

@@ -73,7 +73,7 @@ ROLE_CONFIG = {
         "store_id": None  # HQ
     },
     "regional_manager": {
-        "count": 3,
+        "count": 2,
         "department": "management", 
         "designation": "Regional Manager",
         "salary_grade": "M1",
@@ -81,7 +81,7 @@ ROLE_CONFIG = {
         "store_id": None  # Multiple stores
     },
     "store_manager": {
-        "count": 10,
+        "count": 5,
         "department": "management",
         "designation": "Store Manager",
         "salary_grade": "M2",
@@ -89,7 +89,7 @@ ROLE_CONFIG = {
         "store_id": "assigned"
     },
     "inventory_manager": {
-        "count": 10,
+        "count": 3,
         "department": "inventory",
         "designation": "Inventory Manager",
         "salary_grade": "S1",
@@ -97,7 +97,7 @@ ROLE_CONFIG = {
         "store_id": "assigned"
     },
     "sales_executive": {
-        "count": 50,
+        "count": 10,
         "department": "sales",
         "designation": "Sales Executive",
         "salary_grade": "J1",
@@ -105,15 +105,23 @@ ROLE_CONFIG = {
         "store_id": "assigned"
     },
     "customer_service": {
-        "count": 20,
+        "count": 5,
         "department": "customer_service",
         "designation": "Customer Service Representative",
         "salary_grade": "J2",
         "base_target": 15000,
         "store_id": "assigned"
     },
+    "cashier": {
+        "count": 2,
+        "department": "sales",
+        "designation": "Senior Cashier",
+        "salary_grade": "J2",
+        "base_target": 20000,
+        "store_id": "assigned"
+    },
     "analyst": {
-        "count": 6,
+        "count": 2,
         "department": "finance",
         "designation": "Business Analyst",
         "salary_grade": "S2",
@@ -224,12 +232,12 @@ def generate_employees() -> list:
             first_name = random.choice(FIRST_NAMES_FEMALE if is_female else FIRST_NAMES_MALE)
             last_name = random.choice(LAST_NAMES)
             
-            # Assign store
+            # Assign store - distribute across 10 stores
             if config["store_id"] == "assigned":
                 store_idx = i % 10
                 store = STORES[store_idx]
             elif role == "store_manager":
-                store = STORES[i]
+                store = STORES[i % 10]  # Each manager gets a store (up to 10)
             else:
                 store = None
             
@@ -427,7 +435,7 @@ def generate_transactions(employees: list, days: int = 30) -> list:
     today = date.today()
     
     # Only sales-related employees make transactions
-    sales_employees = [e for e in employees if e["role"] in ["sales_executive", "customer_service", "store_manager"] and e["status"] == "active"]
+    sales_employees = [e for e in employees if e["role"] in ["sales_executive", "customer_service", "store_manager", "inventory_manager", "cashier"] and e["status"] == "active"]
     
     for day_offset in range(days):
         transaction_date = today - timedelta(days=day_offset)
@@ -441,6 +449,8 @@ def generate_transactions(employees: list, days: int = 30) -> list:
                 num_transactions = random.randint(5, 15)
             elif emp["role"] == "sales_executive":
                 num_transactions = random.randint(20, 50)
+            elif emp["role"] == "cashier":
+                num_transactions = random.randint(25, 60)
             else:
                 num_transactions = random.randint(10, 30)
             

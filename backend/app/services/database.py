@@ -31,7 +31,7 @@ async_session = async_sessionmaker(
 )
 
 
-async def init_db(max_retries: int = 10, retry_delay: float = 2.0):
+async def init_db(max_retries: int = 30, retry_delay: float = 3.0):
     """Initialize database connection with retry logic"""
     for attempt in range(max_retries):
         try:

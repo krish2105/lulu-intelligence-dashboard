@@ -16,7 +16,7 @@ class SaleBase(BaseModel):
     date: date
     store_id: int = Field(..., gt=0)
     item_id: int = Field(..., gt=0)
-    sales: int = Field(..., ge=0)
+    sales: int = Field(...)  # Can be negative for returns
 
 
 class SaleResponse(SaleBase):

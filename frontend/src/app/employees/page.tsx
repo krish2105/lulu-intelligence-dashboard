@@ -59,6 +59,7 @@ const ROLE_LABELS: Record<string, string> = {
   inventory_manager: 'Inventory Manager',
   sales_executive: 'Sales Executive',
   customer_service: 'Customer Service',
+  cashier: 'Senior Cashier',
   analyst: 'Analyst',
 };
 

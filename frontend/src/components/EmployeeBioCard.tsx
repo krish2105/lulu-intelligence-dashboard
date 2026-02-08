@@ -52,6 +52,7 @@ const ROLE_COLORS: Record<string, string> = {
   inventory_manager: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
   sales_executive: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
   customer_service: 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200',
+  cashier: 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
   analyst: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200',
 };
 

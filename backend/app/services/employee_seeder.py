@@ -23,10 +23,17 @@ from app.services.employee_generator import (
 
 
 async def check_employees_exist() -> bool:
-    """Check if employees already exist in database"""
+    """Check if employees already exist in database with the correct count"""
     async with async_session() as session:
         result = await session.execute(select(func.count(Employee.id)))
         count = result.scalar()
+        # Expected ~30 employees from ROLE_CONFIG
+        # If we have a vastly different count (e.g. 100 from old config), re-seed
+        from app.services.employee_generator import ROLE_CONFIG
+        expected_count = sum(c["count"] for c in ROLE_CONFIG.values())
+        if count and abs(count - expected_count) > 5:
+            logger.info(f"Employee count mismatch: have {count}, expect ~{expected_count}. Will re-seed.")
+            return False
         return count > 0
 
 
@@ -34,10 +41,24 @@ async def seed_employees():
     """Seed employees into the database"""
     logger.info("Starting employee data seeding...")
     
-    # Check if already seeded
+    # Check if already seeded with correct count
     if await check_employees_exist():
-        logger.info("Employees already exist, skipping seeding")
+        logger.info("Employees already exist with correct count, skipping seeding")
         return
+    
+    # Clean up old employee data if it exists (re-seeding)
+    async with async_session() as session:
+        try:
+            await session.execute(text("DELETE FROM employee_certifications"))
+            await session.execute(text("DELETE FROM employee_attendance"))
+            await session.execute(text("DELETE FROM employee_transactions"))
+            await session.execute(text("DELETE FROM employee_performance"))
+            await session.execute(text("DELETE FROM employees"))
+            await session.commit()
+            logger.info("Cleaned up old employee data for re-seeding")
+        except Exception as e:
+            await session.rollback()
+            logger.warning(f"Cleanup warning (tables may not exist yet): {e}")
     
     # Generate synthetic data
     employees_data = generate_employees()
@@ -167,34 +188,25 @@ async def seed_employees():
 
 
 async def run_employee_migration():
-    """Run the employee migration SQL"""
+    """Run the employee migration - create tables via SQLAlchemy models"""
     logger.info("Running employee migration...")
     
-    migration_path = "/app/database/migrations/004_employee_system.sql"
-    
     try:
-        with open(migration_path, "r") as f:
-            migration_sql = f.read()
+        from app.models.employee import (
+            Employee, EmployeePerformance, EmployeeTransaction,
+            EmployeeAttendance, EmployeeCertification
+        )
+        from app.models.sales import Base
         
         async with engine.begin() as conn:
-            # Split by semicolon and execute each statement
-            statements = migration_sql.split(";")
-            for stmt in statements:
-                stmt = stmt.strip()
-                if stmt and not stmt.startswith("--"):
-                    try:
-                        await conn.execute(text(stmt))
-                    except Exception as e:
-                        # Ignore errors for CREATE TYPE IF NOT EXISTS, etc.
-                        if "already exists" not in str(e).lower():
-                            logger.warning(f"Migration statement warning: {e}")
+            # Create all employee tables if they don't exist
+            await conn.run_sync(Base.metadata.create_all)
         
-        logger.info("Employee migration completed")
+        logger.info("Employee migration completed (tables created via SQLAlchemy)")
         
-    except FileNotFoundError:
-        logger.warning(f"Migration file not found at {migration_path}, skipping migration")
     except Exception as e:
         logger.error(f"Error running migration: {e}")
+        raise
 
 
 async def initialize_employee_system():

@@ -59,7 +59,7 @@ class EmployeePerformanceStreamer:
                 query = select(Employee).where(
                     and_(
                         Employee.status == "active",
-                        Employee.role.in_(["sales_executive", "customer_service", "store_manager", "inventory_manager"])
+                        Employee.role.in_(["sales_executive", "customer_service", "store_manager", "inventory_manager", "cashier"])
                     )
                 )
                 result = await session.execute(query)
