@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 // Web Speech API types
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList;
@@ -153,7 +155,7 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
     }]);
 
     try {
-      const response = await fetch('http://localhost:8000/api/ai/chat/stream', {
+      const response = await fetch(`${API_URL}/api/ai/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -227,7 +229,7 @@ export default function ChatBot({ isOpen, onToggle }: ChatBotProps) {
 
   const clearChat = async () => {
     try {
-      await fetch('http://localhost:8000/api/ai/chat/clear', {
+      await fetch(`${API_URL}/api/ai/chat/clear`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId })

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import EmployeePerformanceChart from '@/components/EmployeePerformanceChart';
 import EmployeeBioCard from '@/components/EmployeeBioCard';
+import NewEmployeeModal from '@/components/NewEmployeeModal';
 
 interface Employee {
   id: number;
@@ -82,6 +83,7 @@ export default function EmployeesPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'employees' | 'analytics'>('overview');
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -378,7 +380,10 @@ export default function EmployeesPage() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
             <UserPlus className="w-4 h-4" />
             Add Employee
           </button>
@@ -543,6 +548,16 @@ export default function EmployeesPage() {
           </div>
         </div>
       )}
+
+      {/* Add Employee Modal */}
+      <NewEmployeeModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onSuccess={() => {
+          setShowAddModal(false);
+          fetchData();
+        }}
+      />
     </div>
   );
 }

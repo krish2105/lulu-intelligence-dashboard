@@ -5,7 +5,7 @@ Handles user management, store configuration, and system settings
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 
 from app.services.database import async_session
@@ -20,6 +20,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 # =============================================================================
 
 class UserCreate(BaseModel):
+    model_config = ConfigDict(strict=True)
     email: str
     first_name: str
     last_name: str

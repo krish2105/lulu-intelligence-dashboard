@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 from sqlalchemy import select, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,7 @@ settings = get_settings()
 # CONFIGURATION
 # =============================================================================
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_urlsafe(32))
+SECRET_KEY = settings.jwt_secret_key
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
@@ -52,12 +52,14 @@ class Token(BaseModel):
 
 
 class UserLogin(BaseModel):
+    model_config = ConfigDict(strict=True)
     email: EmailStr
     password: str
     remember_me: bool = False
 
 
 class UserCreate(BaseModel):
+    model_config = ConfigDict(strict=True)
     email: EmailStr
     password: str
     first_name: str
@@ -83,6 +85,7 @@ class UserResponse(BaseModel):
 
 
 class PasswordChange(BaseModel):
+    model_config = ConfigDict(strict=True)
     current_password: str
     new_password: str
 
@@ -102,17 +105,31 @@ def get_password_hash(password: str) -> str:
 
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
-    """Validate password meets requirements"""
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters"
+    """Validate password meets complexity requirements:
+    - Minimum 12 characters
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one digit
+    - At least one special character
+    """
+    if len(password) < 12:
+        return False, "Password must be at least 12 characters"
+    if len(password) > 128:
+        return False, "Password must be at most 128 characters"
     if not any(c.isupper() for c in password):
         return False, "Password must contain at least one uppercase letter"
     if not any(c.islower() for c in password):
         return False, "Password must contain at least one lowercase letter"
     if not any(c.isdigit() for c in password):
         return False, "Password must contain at least one number"
-    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
-        return False, "Password must contain at least one special character"
+    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?~`" for c in password):
+        return False, "Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?~`)"
+    # Check for common weak patterns
+    common_patterns = ['password', '12345678', 'qwerty', 'letmein', 'admin']
+    lower_pwd = password.lower()
+    for pattern in common_patterns:
+        if pattern in lower_pwd:
+            return False, f"Password must not contain common pattern: '{pattern}'"
     return True, "Password is valid"
 
 
@@ -436,8 +453,25 @@ class AuthService:
             return await AuthService.create_tokens(user_data)
     
     @staticmethod
-    async def logout(user_id: int, ip_address: str = None):
-        """Log user logout"""
+    async def logout(user_id: int, ip_address: str = None, token: str = None):
+        """Log user logout and blacklist the token in Redis."""
+        import hashlib
+        
+        # Blacklist the token in Redis so SessionInvalidationMiddleware rejects it
+        if token:
+            try:
+                from app.services.redis_client import redis_client
+                if redis_client:
+                    token_hash = hashlib.sha256(token.encode()).hexdigest()
+                    # Blacklist for the max token lifetime (7 days for refresh tokens)
+                    await redis_client.set(
+                        f"blacklisted_token:{token_hash}",
+                        "1",
+                        ex=7 * 24 * 60 * 60  # 7 days TTL
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to blacklist token in Redis: {e}")
+        
         async with async_session() as session:
             await AuthService._log_audit(session, user_id, 'logout', "User logged out", ip_address)
             await session.commit()

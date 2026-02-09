@@ -3,7 +3,7 @@ Authentication Routes - Login, Logout, Token Management
 """
 from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr
 from typing import Optional, List
 from datetime import datetime
 
@@ -91,6 +91,7 @@ def require_permission(permission: str):
 # =============================================================================
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
     email: EmailStr
     password: str
     remember_me: bool = False
@@ -105,6 +106,7 @@ class LoginResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
+    model_config = ConfigDict(strict=True)
     refresh_token: str
 
 
@@ -179,10 +181,17 @@ async def refresh_token(refresh_data: RefreshRequest):
 @router.post("/logout", response_model=MessageResponse)
 async def logout(request: Request, user: dict = Depends(get_current_user)):
     """
-    Logout current user
+    Logout current user and invalidate token
     """
     ip_address = request.client.host if request.client else None
-    await AuthService.logout(user['id'], ip_address)
+    
+    # Extract token from Authorization header to blacklist it
+    token = None
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+    
+    await AuthService.logout(user['id'], ip_address, token=token)
     
     logger.info(f"User logged out: {user['email']}")
     

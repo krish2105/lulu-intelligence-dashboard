@@ -14,7 +14,10 @@ from app.services.employee_seeder import initialize_employee_system
 from app.routes import sales, streaming, history, kpis, stream, analytics, auth
 from app.routes import ai as ai_routes
 from app.routes import inventory, promotions, alerts, admin, reports, monitoring, employees
-from app.middleware import RequestIDMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
+from app.middleware import (
+    RequestIDMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware,
+    BodySizeLimitMiddleware, CSRFMiddleware, SessionInvalidationMiddleware
+)
 
 
 settings = get_settings()
@@ -71,19 +74,29 @@ app = FastAPI(
 # Middleware (order matters - first added = last executed)
 # =============================================================================
 
-# Security headers
+# Security headers (outermost - always applied)
 app.add_middleware(SecurityHeadersMiddleware)
 
-# Rate limiting
+# CSRF protection
+app.add_middleware(CSRFMiddleware)
+
+# Request body size limit
+app.add_middleware(BodySizeLimitMiddleware)
+
+# Session invalidation check (token blacklist)
+app.add_middleware(SessionInvalidationMiddleware)
+
+# Rate limiting (Redis-backed)
 app.add_middleware(RateLimitMiddleware)
 
 # Request ID tracking and logging
 app.add_middleware(RequestIDMiddleware)
 
-# CORS middleware
+# CORS middleware (innermost - runs first)
+cors_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://frontend:3000"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

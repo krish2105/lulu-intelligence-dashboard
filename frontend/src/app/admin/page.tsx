@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Shield, Users, Store, Settings, Key, Activity,
   Plus, Edit2, Trash2, Check, X, Search, RefreshCw,
-  UserPlus, Lock, Unlock, Mail, Calendar, ChevronDown
+  UserPlus, Lock, Unlock, Mail, Calendar, ChevronDown,
+  Briefcase, TrendingUp, Award, Zap
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLE_DISPLAY_NAMES, UserRole } from '@/types/auth';
@@ -30,7 +31,7 @@ interface StoreInfo {
 
 export default function AdminPage() {
   const { user, authFetch, hasRole } = useAuth();
-  const [activeTab, setActiveTab] = useState<'users' | 'stores' | 'settings'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'stores' | 'employees' | 'settings'>('users');
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [stores, setStores] = useState<StoreInfo[]>([]);
@@ -38,6 +39,10 @@ export default function AdminPage() {
   const [showAddUser, setShowAddUser] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const [employeeStats, setEmployeeStats] = useState<any>(null);
+  const [livePerformance, setLivePerformance] = useState<any[]>([]);
 
   // Check if user has admin access
   const isAdmin = hasRole(['super_admin']);
@@ -89,6 +94,28 @@ export default function AdminPage() {
       if (dashRes.ok) {
         const data = await dashRes.json();
         setDashboardStats(data);
+      }
+
+      // Fetch employees
+      try {
+        const empRes = await authFetch('/api/employees/employees');
+        if (empRes.ok) {
+          const empData = await empRes.json();
+          setEmployees(empData.employees || []);
+        }
+      } catch (e) {
+        console.error('Failed to fetch employees:', e);
+      }
+
+      // Fetch employee stats
+      try {
+        const statsRes = await authFetch('/api/employees/stats/overview');
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          setEmployeeStats(statsData);
+        }
+      } catch (e) {
+        console.error('Failed to fetch employee stats:', e);
       }
     } catch (error) {
       console.error('Failed to fetch admin data:', error);
@@ -236,6 +263,35 @@ export default function AdminPage() {
     u.last_name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const filteredEmployees = employees.filter((emp: any) =>
+    emp.full_name?.toLowerCase().includes(employeeSearch.toLowerCase()) ||
+    emp.employee_code?.toLowerCase().includes(employeeSearch.toLowerCase()) ||
+    emp.department?.toLowerCase().includes(employeeSearch.toLowerCase()) ||
+    emp.store_name?.toLowerCase().includes(employeeSearch.toLowerCase())
+  );
+
+  // SSE for real-time performance updates
+  useEffect(() => {
+    if (activeTab !== 'employees') return;
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(`${API_URL}/api/employees/employees/performance/live`);
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.updates) {
+            setLivePerformance(data.updates);
+          }
+        } catch (e) { /* ignore parse errors */ }
+      };
+      eventSource.onerror = () => {
+        eventSource?.close();
+      };
+    } catch (e) { /* SSE not supported */ }
+    return () => { eventSource?.close(); };
+  }, [activeTab]);
+
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('en-AE', {
       year: 'numeric',
@@ -330,6 +386,17 @@ export default function AdminPage() {
           >
             <Store className="w-5 h-5" />
             Stores
+          </button>
+          <button
+            onClick={() => setActiveTab('employees')}
+            className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors border-b-2 -mb-px ${
+              activeTab === 'employees'
+                ? 'text-purple-600 border-purple-600'
+                : 'text-gray-500 border-transparent hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            <Briefcase className="w-5 h-5" />
+            Employees
           </button>
           <button
             onClick={() => setActiveTab('settings')}
@@ -516,6 +583,191 @@ export default function AdminPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* Employees Tab */}
+        {activeTab === 'employees' && (
+          <div className="space-y-6">
+            {/* Employee Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                    <Briefcase className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Total Employees</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {employeeStats?.total_employees || employees.length}
+                </p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                    <TrendingUp className="w-5 h-5 text-green-600 dark:text-green-400" />
+                  </div>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Avg Performance</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {employeeStats?.avg_performance_score?.toFixed(1) || '—'}
+                </p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
+                    <Award className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Top Performers</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {employeeStats?.top_performers || employees.filter((e: any) => (e.performance_score || 0) >= 85).length}
+                </p>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+                    <Zap className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Departments</span>
+                </div>
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {employeeStats?.departments || new Set(employees.map((e: any) => e.department)).size}
+                </p>
+              </div>
+            </div>
+
+            {/* Real-time Performance Pulse */}
+            {livePerformance.length > 0 && (
+              <div className="bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                  <span className="text-sm font-medium">Live Performance Updates</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {livePerformance.slice(0, 4).map((perf: any, idx: number) => (
+                    <div key={idx} className="bg-white/10 rounded-lg p-3 backdrop-blur-sm">
+                      <p className="text-xs text-white/70">{perf.employee_name || `Employee #${perf.employee_id}`}</p>
+                      <p className="text-lg font-bold">{perf.score?.toFixed(1) || '—'}</p>
+                      <p className="text-xs text-white/60">{perf.metric || 'Performance'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Search & Actions */}
+            <div className="flex items-center justify-between">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search employees by name, code, department..."
+                  value={employeeSearch}
+                  onChange={(e) => setEmployeeSearch(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => fetchData()}
+                  className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors"
+                  title="Refresh"
+                >
+                  <RefreshCw className="w-5 h-5" />
+                </button>
+                <a
+                  href="/employees"
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                >
+                  <Briefcase className="w-5 h-5" />
+                  Full Employee Page
+                </a>
+              </div>
+            </div>
+
+            {/* Employees Table */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-gray-700/50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Employee</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Department</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Store</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Role</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Performance</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {filteredEmployees.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                        {employeeSearch ? 'No employees match your search' : 'No employees found'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredEmployees.slice(0, 20).map((emp: any) => {
+                      const score = emp.performance_score || 0;
+                      const grade = score >= 90 ? 'A+' : score >= 80 ? 'A' : score >= 70 ? 'B' : score >= 60 ? 'C' : 'D';
+                      const gradeColor = score >= 80 ? 'text-green-600 bg-green-100 dark:bg-green-900/30 dark:text-green-400'
+                        : score >= 60 ? 'text-amber-600 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400'
+                        : 'text-red-600 bg-red-100 dark:bg-red-900/30 dark:text-red-400';
+                      return (
+                        <tr key={emp.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white font-semibold text-sm">
+                                {emp.full_name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2) || '??'}
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-900 dark:text-white">{emp.full_name || 'Unknown'}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">{emp.employee_code || ''}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">{emp.department || '—'}</td>
+                          <td className="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">{emp.store_name || '—'}</td>
+                          <td className="px-6 py-4">
+                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                              {emp.role?.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || '—'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                  style={{ width: `${Math.min(score, 100)}%` }}
+                                />
+                              </div>
+                              <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${gradeColor}`}>{grade}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
+                              emp.status === 'active'
+                                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${emp.status === 'active' ? 'bg-green-500' : 'bg-red-500'}`} />
+                              {emp.status || 'active'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+              {filteredEmployees.length > 20 && (
+                <div className="px-6 py-3 border-t border-gray-100 dark:border-gray-700 text-center">
+                  <a href="/employees" className="text-sm text-purple-600 hover:text-purple-700 font-medium">
+                    View all {filteredEmployees.length} employees →
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         )}

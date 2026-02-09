@@ -17,6 +17,15 @@ class Settings(BaseSettings):
     debug: bool = True
     secret_key: str = "your-secret-key-change-in-production"
     
+    # JWT
+    jwt_secret_key: str = "super-secret-change-in-production-2026"
+    
+    # CORS
+    cors_origins: str = "http://localhost:3000,http://frontend:3000"
+    
+    # Request Body Size Limit (MB)
+    max_body_size_mb: int = 10
+    
     # API Keys (optional - for AI features)
     openai_api_key: Optional[str] = None
     deepgram_api_key: Optional[str] = None

@@ -6,7 +6,7 @@ Uses real sales data for promotion insights with Redis caching
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ router = APIRouter(tags=["Promotions & Pricing"])
 # =============================================================================
 
 class PromotionCreate(BaseModel):
+    model_config = ConfigDict(strict=True)
     name: str
     description: str
     discount_type: str  # percentage, fixed, bogo
@@ -102,7 +103,7 @@ async def get_active_promotions(
     category: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
-    """Get currently active promotions based on sales patterns"""
+    """Get currently active promotions — merges DB and generated promotions"""
     async with async_session() as session:
         try:
             accessible_stores = current_user.get("permissions", {}).get("accessible_stores", [])
@@ -116,6 +117,51 @@ async def get_active_promotions(
             )
             
             promotions = result.get("promotions", [])
+            
+            # Also fetch active promotions from DB
+            try:
+                store_filter = ""
+                target_stores = [store_id] if store_id else accessible_stores
+                if target_stores:
+                    store_list = ','.join(map(str, target_stores))
+                    store_filter = f"""
+                        AND (p.applies_to_all_stores = TRUE 
+                             OR p.id IN (SELECT promotion_id FROM promotion_stores WHERE store_id IN ({store_list})))
+                    """
+                
+                db_query = text(f"""
+                    SELECT 
+                        p.id, p.name, p.description, p.promotion_type, 
+                        p.discount_value, p.start_date, p.end_date,
+                        p.current_uses, p.total_discount_given
+                    FROM promotions p
+                    WHERE p.status = 'active' {store_filter}
+                    ORDER BY p.created_at DESC
+                """)
+                
+                db_result = await session.execute(db_query)
+                type_reverse_map = {
+                    "percentage_discount": "percentage",
+                    "fixed_discount": "fixed",
+                    "buy_one_get_one": "bogo",
+                }
+                
+                for row in db_result.fetchall():
+                    promotions.append({
+                        "id": row[0],
+                        "name": row[1],
+                        "description": row[2] or "",
+                        "discount_type": type_reverse_map.get(row[3], "percentage"),
+                        "discount_value": float(row[4]) if row[4] else 0,
+                        "start_date": row[5].strftime("%Y-%m-%d") if row[5] else None,
+                        "end_date": row[6].strftime("%Y-%m-%d") if row[6] else None,
+                        "status": "active",
+                        "redemption_count": row[7] or 0,
+                        "total_discount_given": float(row[8]) if row[8] else 0,
+                        "source": "database",
+                    })
+            except Exception as db_err:
+                logger.warning(f"Could not fetch DB active promotions: {db_err}")
             
             # Filter by category if specified
             if category:
@@ -141,31 +187,95 @@ async def get_all_promotions(
     limit: int = Query(20, ge=1, le=100),
     current_user: dict = Depends(get_current_user)
 ):
-    """Get all promotions with filtering"""
+    """Get all promotions with filtering — merges DB promotions with generated ones"""
     async with async_session() as session:
         try:
             accessible_stores = current_user.get("permissions", {}).get("accessible_stores", [])
             
+            # 1. Get generated promotions from sales patterns
             result = await DataSyncService.get_promotions_from_sales(
                 session,
                 accessible_stores=accessible_stores
             )
+            generated_promotions = result.get("promotions", [])
             
-            promotions = result.get("promotions", [])
+            # 2. Get real promotions from database
+            db_promotions = []
+            try:
+                store_filter = ""
+                if accessible_stores:
+                    store_list = ','.join(map(str, accessible_stores))
+                    store_filter = f"""
+                        AND (p.applies_to_all_stores = TRUE 
+                             OR p.id IN (SELECT promotion_id FROM promotion_stores WHERE store_id IN ({store_list})))
+                    """
+                
+                status_filter = ""
+                if status:
+                    status_filter = f"AND p.status = '{status}'"
+                
+                db_query = text(f"""
+                    SELECT 
+                        p.id, p.name, p.description, p.promotion_type, 
+                        p.discount_value, p.discount_cap, p.minimum_purchase,
+                        p.start_date, p.end_date, p.status,
+                        p.current_uses, p.total_discount_given,
+                        p.promotion_code, p.created_at
+                    FROM promotions p
+                    WHERE 1=1 {store_filter} {status_filter}
+                    ORDER BY p.created_at DESC
+                """)
+                
+                db_result = await session.execute(db_query)
+                db_rows = db_result.fetchall()
+                
+                # Map DB enum back to frontend types
+                type_reverse_map = {
+                    "percentage_discount": "percentage",
+                    "fixed_discount": "fixed",
+                    "buy_one_get_one": "bogo",
+                    "buy_x_get_y": "bogo",
+                    "bundle_deal": "bogo",
+                    "clearance": "percentage",
+                    "loyalty_exclusive": "percentage",
+                }
+                
+                for row in db_rows:
+                    db_promotions.append({
+                        "id": row[0],
+                        "name": row[1],
+                        "description": row[2] or "",
+                        "discount_type": type_reverse_map.get(row[3], "percentage"),
+                        "discount_value": float(row[4]) if row[4] else 0,
+                        "max_discount": float(row[5]) if row[5] else None,
+                        "min_purchase": float(row[6]) if row[6] else None,
+                        "start_date": row[7].strftime("%Y-%m-%d") if row[7] else None,
+                        "end_date": row[8].strftime("%Y-%m-%d") if row[8] else None,
+                        "status": row[9] or "draft",
+                        "redemption_count": row[10] or 0,
+                        "total_discount_given": float(row[11]) if row[11] else 0,
+                        "promotion_code": row[12],
+                        "source": "database",
+                    })
+            except Exception as db_err:
+                logger.warning(f"Could not fetch DB promotions: {db_err}")
+            
+            # 3. Merge: DB promotions first, then generated
+            all_promotions = db_promotions + generated_promotions
             
             # Apply filters
-            if status:
-                promotions = [p for p in promotions if p.get("status") == status]
+            if status and not status_filter:  # Already filtered for DB, filter generated
+                all_promotions = [p for p in all_promotions if p.get("status") == status]
             if category:
-                promotions = [p for p in promotions if p.get("category") == category]
+                all_promotions = [p for p in all_promotions if p.get("category") == category]
             
             # Pagination
-            total = len(promotions)
+            total = len(all_promotions)
             offset = (page - 1) * limit
-            promotions = promotions[offset:offset + limit]
+            all_promotions = all_promotions[offset:offset + limit]
             
             return {
-                "promotions": promotions,
+                "promotions": all_promotions,
                 "total": total,
                 "page": page,
                 "limit": limit,
@@ -376,7 +486,7 @@ async def create_promotion(
     promotion: PromotionCreate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Create a new promotion"""
+    """Create a new promotion and persist to database"""
     # Check permissions
     if not current_user.get("permissions", {}).get("can_manage_promotions"):
         raise HTTPException(status_code=403, detail="Not authorized to create promotions")
@@ -388,17 +498,107 @@ async def create_promotion(
         if store_id not in accessible_stores:
             raise HTTPException(status_code=403, detail=f"Access denied to store {store_id}")
     
-    # In a real implementation, this would create a database record
-    import random
-    return {
-        "success": True,
-        "message": "Promotion created successfully",
-        "promotion_id": random.randint(100, 999),
-        "name": promotion.name,
-        "status": "scheduled" if promotion.start_date > date.today() else "active",
-        "start_date": promotion.start_date.isoformat(),
-        "end_date": promotion.end_date.isoformat()
+    # Map frontend discount_type to database enum
+    type_map = {
+        "percentage": "percentage_discount",
+        "fixed": "fixed_discount",
+        "bogo": "buy_one_get_one",
     }
+    db_promotion_type = type_map.get(promotion.discount_type, "percentage_discount")
+    
+    # Determine status based on dates
+    today = date.today()
+    if promotion.start_date > today:
+        status = "scheduled"
+    elif promotion.end_date < today:
+        status = "ended"
+    else:
+        status = "active"
+    
+    # Generate unique promotion code
+    import random, string
+    promo_code = f"PROMO-{''.join(random.choices(string.ascii_uppercase + string.digits, k=6))}"
+    
+    async with async_session() as session:
+        try:
+            # Insert into promotions table
+            insert_query = text("""
+                INSERT INTO promotions (
+                    name, description, promotion_code, promotion_type,
+                    discount_value, discount_cap, minimum_purchase,
+                    start_date, end_date, status,
+                    applies_to_all_stores, applies_to_all_items,
+                    created_by, created_at, updated_at
+                ) VALUES (
+                    :name, :description, :promo_code, :promotion_type,
+                    :discount_value, :discount_cap, :minimum_purchase,
+                    :start_date, :end_date, :status,
+                    :applies_to_all_stores, FALSE,
+                    :created_by, NOW(), NOW()
+                )
+                RETURNING id
+            """)
+            
+            result = await session.execute(insert_query, {
+                "name": promotion.name,
+                "description": promotion.description,
+                "promo_code": promo_code,
+                "promotion_type": db_promotion_type,
+                "discount_value": promotion.discount_value,
+                "discount_cap": promotion.max_discount if promotion.max_discount else None,
+                "minimum_purchase": promotion.min_purchase if promotion.min_purchase else None,
+                "start_date": datetime.combine(promotion.start_date, datetime.min.time()),
+                "end_date": datetime.combine(promotion.end_date, datetime.min.time()),
+                "status": status,
+                "applies_to_all_stores": len(promotion.store_ids) >= 10,
+                "created_by": current_user.get("id"),
+            })
+            
+            new_id = result.scalar_one()
+            
+            # Insert promotion_stores entries
+            for sid in promotion.store_ids:
+                await session.execute(text("""
+                    INSERT INTO promotion_stores (promotion_id, store_id, created_at)
+                    VALUES (:promo_id, :store_id, NOW())
+                    ON CONFLICT (promotion_id, store_id) DO NOTHING
+                """), {"promo_id": new_id, "store_id": sid})
+            
+            # Insert promotion_items if specified
+            if promotion.item_ids:
+                for item_id in promotion.item_ids:
+                    await session.execute(text("""
+                        INSERT INTO promotion_items (promotion_id, item_id, created_at)
+                        VALUES (:promo_id, :item_id, NOW())
+                        ON CONFLICT (promotion_id, item_id) DO NOTHING
+                    """), {"promo_id": new_id, "item_id": item_id})
+            
+            await session.commit()
+            
+            logger.info(f"Promotion created: {promo_code} (ID: {new_id}) by user {current_user.get('email')}")
+            
+            # Invalidate promotions cache
+            try:
+                from app.services.cache import invalidate_promotions_cache
+                await invalidate_promotions_cache()
+            except Exception:
+                pass
+            
+            return {
+                "success": True,
+                "message": "Promotion created successfully",
+                "promotion_id": new_id,
+                "promotion_code": promo_code,
+                "name": promotion.name,
+                "status": status,
+                "start_date": promotion.start_date.isoformat(),
+                "end_date": promotion.end_date.isoformat()
+            }
+            
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error creating promotion: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create promotion: {str(e)}")
 
 
 @router.get("/{promotion_id}")
@@ -439,16 +639,66 @@ async def update_promotion(
     update: PromotionUpdate,
     current_user: dict = Depends(get_current_user)
 ):
-    """Update a promotion"""
+    """Update a promotion in the database"""
     if not current_user.get("permissions", {}).get("can_manage_promotions"):
         raise HTTPException(status_code=403, detail="Not authorized to update promotions")
     
-    # In a real implementation, this would update the database record
-    return {
-        "success": True,
-        "message": "Promotion updated successfully",
-        "promotion_id": promotion_id
-    }
+    async with async_session() as session:
+        try:
+            # Build dynamic SET clause
+            updates = {}
+            set_parts = []
+            if update.name is not None:
+                set_parts.append("name = :name")
+                updates["name"] = update.name
+            if update.description is not None:
+                set_parts.append("description = :description")
+                updates["description"] = update.description
+            if update.discount_value is not None:
+                set_parts.append("discount_value = :discount_value")
+                updates["discount_value"] = update.discount_value
+            if update.end_date is not None:
+                set_parts.append("end_date = :end_date")
+                updates["end_date"] = datetime.combine(update.end_date, datetime.min.time())
+            if update.status is not None:
+                set_parts.append("status = :status")
+                updates["status"] = update.status
+            
+            if not set_parts:
+                return {"success": True, "message": "No changes to apply", "promotion_id": promotion_id}
+            
+            set_parts.append("updated_at = NOW()")
+            updates["promo_id"] = promotion_id
+            
+            query = text(f"UPDATE promotions SET {', '.join(set_parts)} WHERE id = :promo_id RETURNING id")
+            result = await session.execute(query, updates)
+            row = result.scalar_one_or_none()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Promotion not found")
+            
+            await session.commit()
+            
+            # Invalidate cache
+            try:
+                from app.services.cache import invalidate_promotions_cache
+                await invalidate_promotions_cache()
+            except Exception:
+                pass
+            
+            logger.info(f"Promotion {promotion_id} updated by {current_user.get('email')}")
+            
+            return {
+                "success": True,
+                "message": "Promotion updated successfully",
+                "promotion_id": promotion_id
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error updating promotion {promotion_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to update promotion: {str(e)}")
 
 
 @router.delete("/{promotion_id}")
@@ -456,13 +706,44 @@ async def delete_promotion(
     promotion_id: int,
     current_user: dict = Depends(get_current_user)
 ):
-    """Delete/cancel a promotion"""
+    """Cancel/delete a promotion from the database"""
     if not current_user.get("permissions", {}).get("can_manage_promotions"):
         raise HTTPException(status_code=403, detail="Not authorized to delete promotions")
     
-    # In a real implementation, this would delete/cancel the database record
-    return {
-        "success": True,
-        "message": "Promotion cancelled successfully",
-        "promotion_id": promotion_id
-    }
+    async with async_session() as session:
+        try:
+            # Soft delete: set status to 'cancelled'
+            query = text("""
+                UPDATE promotions 
+                SET status = 'cancelled', updated_at = NOW() 
+                WHERE id = :promo_id 
+                RETURNING id
+            """)
+            result = await session.execute(query, {"promo_id": promotion_id})
+            row = result.scalar_one_or_none()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Promotion not found")
+            
+            await session.commit()
+            
+            # Invalidate cache
+            try:
+                from app.services.cache import invalidate_promotions_cache
+                await invalidate_promotions_cache()
+            except Exception:
+                pass
+            
+            logger.info(f"Promotion {promotion_id} cancelled by {current_user.get('email')}")
+            
+            return {
+                "success": True,
+                "message": "Promotion cancelled successfully",
+                "promotion_id": promotion_id
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error deleting promotion {promotion_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to cancel promotion: {str(e)}")

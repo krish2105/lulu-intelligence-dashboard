@@ -264,20 +264,30 @@ async def get_employee(employee_id: int):
 
 @router.post("/employees", response_model=Dict[str, Any])
 async def create_employee(employee: EmployeeCreate):
-    """Create a new employee"""
+    """Create a new employee with full validation"""
     try:
         async with async_session() as session:
-            # Generate employee code
-            # Format: LLU-{REGION}-{SEQUENTIAL}
-            count_query = select(func.count(Employee.id))
-            count = await session.scalar(count_query)
+            # ===== VALIDATION 1: Check for duplicate email =====
+            email_check = select(Employee).where(Employee.email == employee.email)
+            existing = await session.execute(email_check)
+            if existing.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"An employee with email '{employee.email}' already exists"
+                )
             
+            # ===== VALIDATION 2: Check store exists =====
             region_prefix = "UAE"
             if employee.store_id:
                 store_query = select(Store).where(Store.id == employee.store_id)
                 store_result = await session.execute(store_query)
                 store = store_result.scalar_one_or_none()
-                if store and store.location:
+                if not store:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Store with ID {employee.store_id} does not exist"
+                    )
+                if store.location:
                     region_map = {
                         "Dubai": "DXB",
                         "Abu Dhabi": "AUH", 
@@ -287,7 +297,78 @@ async def create_employee(employee: EmployeeCreate):
                     }
                     region_prefix = region_map.get(store.location, "UAE")
             
+            # ===== VALIDATION 3: Check reports_to employee exists =====
+            if employee.reports_to_id:
+                mgr_query = select(Employee).where(Employee.id == employee.reports_to_id)
+                mgr_result = await session.execute(mgr_query)
+                if not mgr_result.scalar_one_or_none():
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Manager with ID {employee.reports_to_id} does not exist"
+                    )
+            
+            # ===== VALIDATION 4: Check valid role =====
+            valid_roles = [
+                "sales_executive", "senior_sales", "team_lead", 
+                "assistant_manager", "store_manager", "regional_manager",
+                "cashier", "inventory_clerk", "customer_service"
+            ]
+            if employee.role and employee.role not in valid_roles:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid role '{employee.role}'. Valid roles: {', '.join(valid_roles)}"
+                )
+            
+            # ===== VALIDATION 5: Check valid department =====
+            valid_departments = [
+                "sales", "management", "inventory", "customer_service", 
+                "finance", "hr", "it", "logistics", "marketing"
+            ]
+            if employee.department and employee.department not in valid_departments:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid department '{employee.department}'. Valid departments: {', '.join(valid_departments)}"
+                )
+            
+            # ===== VALIDATION 6: Date validations =====
+            from datetime import date as date_type
+            if employee.date_of_joining > date_type.today():
+                pass  # Allow future join dates (scheduled hires)
+            
+            if employee.date_of_birth:
+                age = (date_type.today() - employee.date_of_birth).days // 365
+                if age < 18:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Employee must be at least 18 years old"
+                    )
+                if age > 100:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Invalid date of birth"
+                    )
+            
+            # ===== VALIDATION 7: Check phone format (basic) =====
+            if employee.phone:
+                import re
+                cleaned_phone = re.sub(r'[\s\-\(\)]', '', employee.phone)
+                if not re.match(r'^\+?[\d]{7,15}$', cleaned_phone):
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Invalid phone number format. Use 7-15 digits, optionally starting with +"
+                    )
+            
+            # Generate employee code
+            count_query = select(func.count(Employee.id))
+            count = await session.scalar(count_query)
             employee_code = f"LLU-{region_prefix}-{(count + 1):04d}"
+            
+            # Ensure employee code is unique
+            code_check = select(Employee).where(Employee.employee_code == employee_code)
+            while (await session.execute(code_check)).scalar_one_or_none():
+                count += 1
+                employee_code = f"LLU-{region_prefix}-{(count + 1):04d}"
+                code_check = select(Employee).where(Employee.employee_code == employee_code)
             
             # Create employee
             new_employee = Employee(
@@ -312,13 +393,16 @@ async def create_employee(employee: EmployeeCreate):
             await session.commit()
             await session.refresh(new_employee)
             
-            logger.info(f"Created employee: {employee_code}")
+            logger.info(f"Created employee: {employee_code} ({employee.first_name} {employee.last_name})")
             
             return {
+                "success": True,
                 "message": "Employee created successfully",
                 "employee": new_employee.to_dict()
             }
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating employee: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -326,7 +410,7 @@ async def create_employee(employee: EmployeeCreate):
 
 @router.put("/employees/{employee_id}", response_model=Dict[str, Any])
 async def update_employee(employee_id: int, update: EmployeeUpdate):
-    """Update an employee"""
+    """Update an employee with validation"""
     try:
         async with async_session() as session:
             query = select(Employee).where(Employee.id == employee_id)
@@ -336,8 +420,44 @@ async def update_employee(employee_id: int, update: EmployeeUpdate):
             if not employee:
                 raise HTTPException(status_code=404, detail="Employee not found")
             
-            # Update fields
             update_data = update.dict(exclude_unset=True)
+            
+            # Validate store_id if being updated
+            if "store_id" in update_data and update_data["store_id"] is not None:
+                store_check = select(Store).where(Store.id == update_data["store_id"])
+                store_result = await session.execute(store_check)
+                if not store_result.scalar_one_or_none():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Store with ID {update_data['store_id']} does not exist"
+                    )
+            
+            # Validate role if being updated
+            if "role" in update_data:
+                valid_roles = [
+                    "sales_executive", "senior_sales", "team_lead", 
+                    "assistant_manager", "store_manager", "regional_manager",
+                    "cashier", "inventory_clerk", "customer_service"
+                ]
+                if update_data["role"] not in valid_roles:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid role '{update_data['role']}'"
+                    )
+            
+            # Validate department if being updated
+            if "department" in update_data:
+                valid_departments = [
+                    "sales", "management", "inventory", "customer_service", 
+                    "finance", "hr", "it", "logistics", "marketing"
+                ]
+                if update_data["department"] not in valid_departments:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid department '{update_data['department']}'"
+                    )
+            
+            # Update fields
             for field, value in update_data.items():
                 setattr(employee, field, value)
             
@@ -347,6 +467,7 @@ async def update_employee(employee_id: int, update: EmployeeUpdate):
             logger.info(f"Updated employee: {employee.employee_code}")
             
             return {
+                "success": True,
                 "message": "Employee updated successfully",
                 "employee": employee.to_dict()
             }
