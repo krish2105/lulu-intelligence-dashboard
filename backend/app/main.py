@@ -6,14 +6,15 @@ import asyncio
 from datetime import datetime
 
 from app.config import get_settings, logger
-from app.services.database import init_db, close_db
+from sqlalchemy import text
+from app.services.database import init_db, close_db, async_session, engine
 from app.services.redis_client import init_redis, close_redis
 from app.services.data_generator import DataGenerator
 from app.services.metrics import get_metrics
 from app.services.employee_seeder import initialize_employee_system
 from app.routes import sales, streaming, history, kpis, stream, analytics, auth
 from app.routes import ai as ai_routes
-from app.routes import inventory, promotions, alerts, admin, reports, monitoring, employees
+from app.routes import inventory, promotions, alerts, admin, reports, monitoring, employees, logistics
 from app.middleware import (
     RequestIDMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware,
     BodySizeLimitMiddleware, CSRFMiddleware, SessionInvalidationMiddleware
@@ -31,6 +32,78 @@ async def lifespan(app: FastAPI):
     
     await init_db()
     logger.info("Database initialized")
+    
+    # Ensure promotions tables exist
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    CREATE TYPE promotion_type AS ENUM (
+                        'percentage_discount', 'fixed_discount', 'buy_one_get_one',
+                        'buy_x_get_y', 'bundle_deal', 'clearance', 'loyalty_exclusive'
+                    );
+                EXCEPTION WHEN duplicate_object THEN null;
+                END $$;
+            """))
+            await conn.execute(text("""
+                DO $$ BEGIN
+                    CREATE TYPE promotion_status AS ENUM ('draft', 'scheduled', 'active', 'paused', 'ended', 'cancelled');
+                EXCEPTION WHEN duplicate_object THEN null;
+                END $$;
+            """))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS promotions (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    promotion_code VARCHAR(50) UNIQUE,
+                    promotion_type promotion_type NOT NULL,
+                    discount_value DECIMAL(10,2) NOT NULL,
+                    discount_cap DECIMAL(10,2),
+                    applies_to_all_stores BOOLEAN DEFAULT TRUE,
+                    applies_to_all_items BOOLEAN DEFAULT FALSE,
+                    minimum_purchase DECIMAL(10,2),
+                    minimum_quantity INTEGER,
+                    max_uses_total INTEGER,
+                    max_uses_per_customer INTEGER,
+                    current_uses INTEGER DEFAULT 0,
+                    start_date TIMESTAMP WITH TIME ZONE NOT NULL,
+                    end_date TIMESTAMP WITH TIME ZONE NOT NULL,
+                    status promotion_status DEFAULT 'draft',
+                    total_revenue DECIMAL(14,2) DEFAULT 0,
+                    total_discount_given DECIMAL(12,2) DEFAULT 0,
+                    total_transactions INTEGER DEFAULT 0,
+                    created_by INTEGER REFERENCES users(id),
+                    approved_by INTEGER REFERENCES users(id),
+                    approved_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS promotion_items (
+                    id SERIAL PRIMARY KEY,
+                    promotion_id INTEGER NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+                    item_id INTEGER NOT NULL REFERENCES items(id),
+                    custom_discount_value DECIMAL(10,2),
+                    required_quantity INTEGER DEFAULT 1,
+                    free_quantity INTEGER DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT unique_promotion_item UNIQUE (promotion_id, item_id)
+                );
+            """))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS promotion_stores (
+                    id SERIAL PRIMARY KEY,
+                    promotion_id INTEGER NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+                    store_id INTEGER NOT NULL REFERENCES stores(id),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT unique_promotion_store UNIQUE (promotion_id, store_id)
+                );
+            """))
+        logger.info("Promotions tables ensured")
+    except Exception as e:
+        logger.warning(f"Promotions table setup: {e}")
     
     await init_redis()
     logger.info("Redis initialized")
@@ -124,6 +197,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
 app.include_router(employees.router, prefix="/api/employees", tags=["Employees"])
+app.include_router(logistics.router, prefix="/api/logistics", tags=["Logistics & Procurement"])
 
 # Also mount /api/latest from stream router
 @app.get("/api/latest", tags=["Stream"])

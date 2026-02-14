@@ -12,7 +12,7 @@ from app.services.database import async_session
 from app.routes.auth import get_current_user
 from app.config import logger
 
-router = APIRouter(prefix="/admin", tags=["Admin"])
+router = APIRouter(tags=["Admin"])
 
 
 # =============================================================================
@@ -437,3 +437,143 @@ async def get_recent_activity(
         except Exception as e:
             logger.error(f"Get activity error: {e}")
             return {"activities": [], "total": 0}
+
+
+@router.post("/users")
+async def create_user(
+    user_data: UserCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Create a new user (admin only)"""
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    from app.services.auth_service import get_password_hash, validate_password_strength
+    
+    # Validate password
+    is_valid, msg = validate_password_strength(user_data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=msg)
+    
+    async with async_session() as session:
+        try:
+            # Check email uniqueness
+            existing = await session.execute(
+                text("SELECT id FROM users WHERE email = :email"),
+                {"email": user_data.email.lower()}
+            )
+            if existing.fetchone():
+                raise HTTPException(status_code=400, detail="A user with this email already exists")
+            
+            password_hash = get_password_hash(user_data.password)
+            
+            result = await session.execute(
+                text("""
+                    INSERT INTO users (email, password_hash, first_name, last_name, role, status, created_at, updated_at)
+                    VALUES (:email, :password_hash, :first_name, :last_name, :role, 'active', NOW(), NOW())
+                    RETURNING id
+                """),
+                {
+                    "email": user_data.email.lower(),
+                    "password_hash": password_hash,
+                    "first_name": user_data.first_name,
+                    "last_name": user_data.last_name,
+                    "role": user_data.role,
+                }
+            )
+            new_id = result.scalar_one()
+            
+            # Set up permissions — grant all region access for managers
+            if user_data.store_ids:
+                for sid in user_data.store_ids:
+                    await session.execute(
+                        text("""
+                            INSERT INTO user_permissions (user_id, store_id, can_view, can_edit, can_manage_inventory, can_manage_promotions)
+                            VALUES (:uid, :sid, TRUE, TRUE, TRUE, TRUE)
+                        """),
+                        {"uid": new_id, "sid": sid}
+                    )
+            else:
+                # Grant access to all regions for managers
+                regions = await session.execute(text("SELECT id FROM regions"))
+                for r in regions.fetchall():
+                    await session.execute(
+                        text("""
+                            INSERT INTO user_permissions (user_id, region_id, can_view, can_edit, can_manage_inventory, can_manage_promotions, can_view_financials, can_approve_transfers)
+                            VALUES (:uid, :rid, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+                        """),
+                        {"uid": new_id, "rid": r[0]}
+                    )
+            
+            await session.commit()
+            
+            logger.info(f"User created: {user_data.email} (role: {user_data.role}) by {current_user.get('email')}")
+            
+            return {
+                "success": True,
+                "message": "User created successfully",
+                "user_id": new_id,
+                "email": user_data.email
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error creating user: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
+
+
+@router.put("/users/{user_id}")
+async def update_user(
+    user_id: int,
+    update_data: UserUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update a user (admin only)"""
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    async with async_session() as session:
+        try:
+            updates = {}
+            set_parts = []
+            if update_data.first_name:
+                set_parts.append("first_name = :first_name")
+                updates["first_name"] = update_data.first_name
+            if update_data.last_name:
+                set_parts.append("last_name = :last_name")
+                updates["last_name"] = update_data.last_name
+            if update_data.role:
+                set_parts.append("role = :role")
+                updates["role"] = update_data.role
+            if update_data.is_active is not None:
+                set_parts.append("status = :status")
+                updates["status"] = "active" if update_data.is_active else "inactive"
+            
+            if not set_parts:
+                return {"success": True, "message": "No changes to apply"}
+            
+            set_parts.append("updated_at = NOW()")
+            updates["user_id"] = user_id
+            
+            result = await session.execute(
+                text(f"UPDATE users SET {', '.join(set_parts)} WHERE id = :user_id RETURNING id"),
+                updates
+            )
+            
+            if not result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            await session.commit()
+            
+            logger.info(f"User {user_id} updated by {current_user.get('email')}")
+            
+            return {"success": True, "message": "User updated successfully", "user_id": user_id}
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"Error updating user: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to update user: {str(e)}")

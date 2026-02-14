@@ -6,7 +6,7 @@ Uses real sales data for promotion insights with Redis caching
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +24,6 @@ router = APIRouter(tags=["Promotions & Pricing"])
 # =============================================================================
 
 class PromotionCreate(BaseModel):
-    model_config = ConfigDict(strict=True)
     name: str
     description: str
     discount_type: str  # percentage, fixed, bogo

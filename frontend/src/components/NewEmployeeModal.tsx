@@ -2,8 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, User, Mail, Phone, Building, Briefcase, Calendar, Globe, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { authFetch } from '@/contexts/AuthContext';
 
 interface NewEmployeeModalProps {
   isOpen: boolean;
@@ -138,7 +137,7 @@ export default function NewEmployeeModal({ isOpen, onClose, onSuccess }: NewEmpl
       if (formData.gender) payload.gender = formData.gender;
       if (formData.nationality) payload.nationality = formData.nationality;
 
-      const res = await fetch(`${API_URL}/api/employees/employees`, {
+      const res = await authFetch('/api/employees/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -162,7 +161,12 @@ export default function NewEmployeeModal({ isOpen, onClose, onSuccess }: NewEmpl
         }, 1500);
       } else {
         const errData = await res.json();
-        setError(errData.detail || 'Failed to create employee');
+        const detail = errData.detail;
+        if (Array.isArray(detail)) {
+          setError(detail.map((e: any) => e.msg || JSON.stringify(e)).join(', '));
+        } else {
+          setError(detail || errData.message || errData.error || 'Failed to create employee');
+        }
       }
     } catch (err) {
       setError('Network error. Please check your connection and try again.');

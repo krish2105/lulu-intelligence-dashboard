@@ -438,10 +438,21 @@ export default function InventoryPage() {
     ));
   };
 
-  const handleProcurementAction = (procId: number, action: 'approved' | 'rejected') => {
+  const handleProcurementAction = async (procId: number, action: 'approved' | 'rejected') => {
+    // Update local state immediately
     setProcurementList(prev => prev.map(item =>
       item.id === procId ? { ...item, status: action } : item
     ));
+    // Also try to update via logistics API
+    try {
+      await authFetch(`/api/logistics/orders/${procId}/logistics-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: action, comments: `${action} from inventory page` }),
+      });
+    } catch (e) {
+      console.error('Failed to sync procurement action:', e);
+    }
   };
 
   const addToProcurement = (item: InventoryItem) => {
@@ -450,19 +461,65 @@ export default function InventoryPage() {
     setShowProcurementModal(true);
   };
 
-  const confirmAddToProcurement = () => {
+  const confirmAddToProcurement = async () => {
     if (!selectedItem) return;
     
-    const newProcItem: ProcurementItem = {
-      id: Date.now(),
-      item: selectedItem,
-      suggestedQuantity: procurementQuantity,
-      status: 'pending',
-      priority: selectedItem.status === 'out_of_stock' ? 'critical' : 'high',
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      const res = await authFetch('/api/logistics/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_id: selectedItem.item_id,
+          item_name: selectedItem.item_name,
+          category: selectedItem.category,
+          store_id: selectedItem.store_id,
+          store_name: selectedItem.store_name,
+          quantity: procurementQuantity,
+          unit_cost: selectedItem.unit_cost,
+          priority: selectedItem.status === 'out_of_stock' ? 'critical' : 'high',
+          reason: `${selectedItem.status === 'out_of_stock' ? 'Out of stock' : 'Low stock'} - Reorder required`,
+          notes: `Current stock: ${selectedItem.quantity}, Reorder level: ${selectedItem.reorder_level}`,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Add to local list for immediate UI feedback
+        const newProcItem: ProcurementItem = {
+          id: data.order?.id || Date.now(),
+          item: selectedItem,
+          suggestedQuantity: procurementQuantity,
+          status: 'pending',
+          priority: selectedItem.status === 'out_of_stock' ? 'critical' : 'high',
+          createdAt: new Date().toISOString(),
+        };
+        setProcurementList(prev => [newProcItem, ...prev]);
+      } else {
+        // Fallback to local state if API fails
+        const newProcItem: ProcurementItem = {
+          id: Date.now(),
+          item: selectedItem,
+          suggestedQuantity: procurementQuantity,
+          status: 'pending',
+          priority: selectedItem.status === 'out_of_stock' ? 'critical' : 'high',
+          createdAt: new Date().toISOString(),
+        };
+        setProcurementList(prev => [newProcItem, ...prev]);
+      }
+    } catch (e) {
+      console.error('Failed to create procurement order:', e);
+      // Fallback to local
+      const newProcItem: ProcurementItem = {
+        id: Date.now(),
+        item: selectedItem,
+        suggestedQuantity: procurementQuantity,
+        status: 'pending',
+        priority: selectedItem.status === 'out_of_stock' ? 'critical' : 'high',
+        createdAt: new Date().toISOString(),
+      };
+      setProcurementList(prev => [newProcItem, ...prev]);
+    }
     
-    setProcurementList(prev => [newProcItem, ...prev]);
     setShowProcurementModal(false);
     setSelectedItem(null);
   };

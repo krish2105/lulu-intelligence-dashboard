@@ -126,7 +126,7 @@ export default function AlertsPage() {
       }
       if (statsRes.ok) {
         const data = await statsRes.json();
-        setStats(data.stats || []);
+        setStats(data.daily_stats || data.stats || []);
       }
     } catch (error) {
       console.error('Failed to fetch alerts data:', error);
@@ -216,6 +216,29 @@ export default function AlertsPage() {
             </button>
           )}
         </div>
+
+        {/* Critical Alert Banner */}
+        {summary && (summary.critical_alerts || 0) > 0 && (
+          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center gap-4">
+            <div className="p-3 rounded-full bg-red-500/20 animate-pulse">
+              <AlertTriangle className="w-6 h-6 text-red-500" />
+            </div>
+            <div className="flex-1">
+              <p className="font-bold text-red-500 text-lg">
+                {summary.critical_alerts} Critical Alert{summary.critical_alerts > 1 ? 's' : ''} Require Immediate Attention
+              </p>
+              <p className="text-sm text-red-400/80">
+                Critical issues affect inventory levels, sales performance, or system health. Review and resolve as soon as possible.
+              </p>
+            </div>
+            <button
+              onClick={() => setSelectedTab('critical')}
+              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium whitespace-nowrap"
+            >
+              View Critical
+            </button>
+          </div>
+        )}
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
@@ -391,20 +414,40 @@ export default function AlertsPage() {
               <div className="p-4 border-b border-gray-100 dark:border-gray-700">
                 <div className="flex flex-wrap items-center gap-3">
                   {/* Severity Tabs */}
-                  <div className="flex gap-1">
-                    {(['all', 'critical', 'warning', 'info'] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        onClick={() => setSelectedTab(tab)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                          selectedTab === tab
-                            ? 'bg-red-600 text-white'
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                        }`}
-                      >
-                        {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                      </button>
-                    ))}
+                  <div className="flex gap-1 flex-wrap">
+                    {(['all', 'critical', 'warning', 'info'] as const).map((tab) => {
+                      const tabCounts: Record<string, number> = {
+                        all: summary?.total_active || 0,
+                        critical: summary?.critical_alerts || 0,
+                        warning: summary?.warning_alerts || 0,
+                        info: summary?.info_alerts || 0,
+                      };
+                      const tabColors: Record<string, string> = {
+                        all: selectedTab === 'all' ? 'bg-gray-700 text-white' : '',
+                        critical: selectedTab === 'critical' ? 'bg-red-600 text-white' : '',
+                        warning: selectedTab === 'warning' ? 'bg-yellow-600 text-white' : '',
+                        info: selectedTab === 'info' ? 'bg-blue-600 text-white' : '',
+                      };
+                      return (
+                        <button
+                          key={tab}
+                          onClick={() => setSelectedTab(tab)}
+                          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                            tabColors[tab] ||
+                            'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                          }`}
+                        >
+                          {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                          {tabCounts[tab] > 0 && (
+                            <span className={`px-1.5 py-0.5 text-xs rounded-full ${
+                              selectedTab === tab ? 'bg-white/20 text-white' : 'bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300'
+                            }`}>
+                              {tabCounts[tab]}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {/* Status Filter */}

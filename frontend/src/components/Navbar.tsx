@@ -92,6 +92,11 @@ const navItems: NavItem[] = [
     icon: <Bell className="w-5 h-5" /> 
   },
   { 
+    label: 'Logistics', 
+    href: '/logistics', 
+    icon: <ShoppingBag className="w-5 h-5" /> 
+  },
+  { 
     label: 'Admin', 
     href: '/admin', 
     icon: <Shield className="w-5 h-5" />,
@@ -224,9 +229,44 @@ export default function Navbar() {
 
     fetchInitialNotifications();
 
+    // Also fetch logistics notifications for procurement updates
+    const fetchLogisticsNotifications = async () => {
+      try {
+        const token = localStorage.getItem('access_token');
+        if (!token) return;
+        const response = await fetch('http://localhost:8000/api/logistics/notifications?limit=10', {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const logisticsNotifs = (data.notifications || []).map((n: any) => ({
+            id: 10000 + n.id,
+            title: n.title,
+            message: n.message,
+            type: n.severity === 'critical' ? 'critical' as const : n.severity === 'warning' ? 'warning' as const : n.severity === 'success' ? 'success' as const : 'info' as const,
+            category: 'system' as const,
+            time: 'Recently',
+            read: false,
+          }));
+          setNotifications(prev => {
+            const merged = [...prev, ...logisticsNotifs];
+            const unique = merged.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
+            return unique.slice(0, 20);
+          });
+        }
+      } catch (e) {
+        // Silently fail if logistics API not available
+      }
+    };
+
+    fetchLogisticsNotifications();
+    // Poll logistics notifications every 30s
+    const logisticsInterval = setInterval(fetchLogisticsNotifications, 30000);
+
     return () => {
       eventSource?.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      clearInterval(logisticsInterval);
     };
   }, [isAuthenticated]);
 

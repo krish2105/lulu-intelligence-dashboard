@@ -174,7 +174,12 @@ export default function NewPromotionModal({ isOpen, onClose, onSuccess, authFetc
         onClose();
       } else {
         const errorData = await response.json();
-        setError(errorData.detail || 'Failed to create promotion');
+        const detail = errorData.detail;
+        if (Array.isArray(detail)) {
+          setError(detail.map((e: any) => e.msg || JSON.stringify(e)).join(', '));
+        } else {
+          setError(detail || errorData.message || errorData.error || 'Failed to create promotion');
+        }
       }
     } catch (err) {
       console.error('Error creating promotion:', err);
